@@ -11,7 +11,12 @@ class AdminRestaurantController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Restaurant::query()->with('owner:id,name,email,role');
+        $query = Restaurant::query()->with([
+            'owner:id,name,email,role',
+            'businessType:id,name,slug',
+            'businessCategory:id,name',
+            'cuisine:id,name',
+        ]);
 
         if ($request->boolean('active_only')) {
             $query->where('is_active', true);
@@ -39,6 +44,9 @@ class AdminRestaurantController extends Controller
             'phone' => ['nullable', 'string', 'max:50'],
             'address' => ['nullable', 'string', 'max:2000'],
             'user_id' => ['required', 'integer', 'exists:users,id'],
+            'business_type_id' => ['nullable', 'integer', 'exists:business_types,id'],
+            'business_category_id' => ['nullable', 'integer', 'exists:business_categories,id'],
+            'cuisine_id' => ['nullable', 'integer', 'exists:cuisines,id'],
             'is_active' => ['sometimes', 'boolean'],
         ]);
 
@@ -50,12 +58,22 @@ class AdminRestaurantController extends Controller
         $data['is_active'] = $data['is_active'] ?? true;
         $restaurant = Restaurant::create($data);
 
-        return response()->json($this->serializeRestaurant($restaurant->load('owner:id,name,email,role')), 201);
+        return response()->json($this->serializeRestaurant($restaurant->load([
+            'owner:id,name,email,role',
+            'businessType:id,name,slug',
+            'businessCategory:id,name',
+            'cuisine:id,name',
+        ])), 201);
     }
 
     public function show(Restaurant $restaurant): JsonResponse
     {
-        return response()->json($this->serializeRestaurant($restaurant->load('owner:id,name,email,role')));
+        return response()->json($this->serializeRestaurant($restaurant->load([
+            'owner:id,name,email,role',
+            'businessType:id,name,slug',
+            'businessCategory:id,name',
+            'cuisine:id,name',
+        ])));
     }
 
     public function update(Request $request, Restaurant $restaurant): JsonResponse
@@ -66,6 +84,9 @@ class AdminRestaurantController extends Controller
             'phone' => ['nullable', 'string', 'max:50'],
             'address' => ['nullable', 'string', 'max:2000'],
             'user_id' => ['sometimes', 'integer', 'exists:users,id'],
+            'business_type_id' => ['nullable', 'integer', 'exists:business_types,id'],
+            'business_category_id' => ['nullable', 'integer', 'exists:business_categories,id'],
+            'cuisine_id' => ['nullable', 'integer', 'exists:cuisines,id'],
             'is_active' => ['sometimes', 'boolean'],
         ]);
 
@@ -78,7 +99,12 @@ class AdminRestaurantController extends Controller
 
         $restaurant->update($data);
 
-        return response()->json($this->serializeRestaurant($restaurant->fresh()->load('owner:id,name,email,role')));
+        return response()->json($this->serializeRestaurant($restaurant->fresh()->load([
+            'owner:id,name,email,role',
+            'businessType:id,name,slug',
+            'businessCategory:id,name',
+            'cuisine:id,name',
+        ])));
     }
 
     public function destroy(Restaurant $restaurant): JsonResponse
@@ -92,7 +118,12 @@ class AdminRestaurantController extends Controller
     {
         $restaurant->update(['is_active' => ! $restaurant->is_active]);
 
-        return response()->json($this->serializeRestaurant($restaurant->fresh()->load('owner:id,name,email,role')));
+        return response()->json($this->serializeRestaurant($restaurant->fresh()->load([
+            'owner:id,name,email,role',
+            'businessType:id,name,slug',
+            'businessCategory:id,name',
+            'cuisine:id,name',
+        ])));
     }
 
     /** Partners dropdown for forms */
@@ -117,7 +148,23 @@ class AdminRestaurantController extends Controller
             'phone' => $r->phone,
             'address' => $r->address,
             'user_id' => $r->user_id,
+            'business_type_id' => $r->business_type_id,
+            'business_category_id' => $r->business_category_id,
+            'cuisine_id' => $r->cuisine_id,
             'is_active' => (bool) $r->is_active,
+            'business_type' => $r->businessType ? [
+                'id' => $r->businessType->id,
+                'name' => $r->businessType->name,
+                'slug' => $r->businessType->slug,
+            ] : null,
+            'business_category' => $r->businessCategory ? [
+                'id' => $r->businessCategory->id,
+                'name' => $r->businessCategory->name,
+            ] : null,
+            'cuisine' => $r->cuisine ? [
+                'id' => $r->cuisine->id,
+                'name' => $r->cuisine->name,
+            ] : null,
             'owner' => $r->owner ? [
                 'id' => $r->owner->id,
                 'name' => $r->owner->name,
