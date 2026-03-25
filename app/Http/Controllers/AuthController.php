@@ -12,18 +12,28 @@ class AuthController extends Controller
 {
     public function login(Request $request): JsonResponse
     {
-        $request->validate([
-            'email' => 'required|email',
-            'password' => 'required',
-        ]);
+        $user = $this->authenticate($request);
 
-        $user = User::where('email', $request->email)->first();
-
-        if (! $user || ! Hash::check($request->password, $user->password)) {
+        if ($user->role === User::ROLE_ADMIN) {
             throw ValidationException::withMessages([
-                'email' => ['The provided credentials are incorrect.'],
+                'email' => ['Invalid email and password.'],
             ]);
         }
+
+        if (! $user->is_active) {
+            throw ValidationException::withMessages([
+                'email' => ['This account has been deactivated.'],
+            ]);
+        }
+
+        $token = $user->createToken('customer-token')->plainTextToken;
+
+        return $this->successResponse($user, $token);
+    }
+
+    public function adminLogin(Request $request): JsonResponse
+    {
+        $user = $this->authenticate($request);
 
         if ($user->role !== User::ROLE_ADMIN) {
             throw ValidationException::withMessages([
@@ -39,6 +49,29 @@ class AuthController extends Controller
 
         $token = $user->createToken('admin-token')->plainTextToken;
 
+        return $this->successResponse($user, $token);
+    }
+
+    private function authenticate(Request $request): User
+    {
+        $request->validate([
+            'email' => 'required|email',
+            'password' => 'required',
+        ]);
+
+        $user = User::where('email', $request->email)->first();
+
+        if (! $user || ! Hash::check($request->password, $user->password)) {
+            throw ValidationException::withMessages([
+                'email' => ['The provided credentials are incorrect.'],
+            ]);
+        }
+
+        return $user;
+    }
+
+    private function successResponse(User $user, string $token): JsonResponse
+    {
         return response()->json([
             'user' => [
                 'id' => $user->id,
