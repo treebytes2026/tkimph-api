@@ -2,6 +2,9 @@
 
 namespace Database\Seeders;
 
+use App\Models\BusinessCategory;
+use App\Models\BusinessType;
+use App\Models\Cuisine;
 use App\Models\Restaurant;
 use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
@@ -17,33 +20,122 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        User::factory()->create([
-            'name' => 'Admin User',
-            'email' => 'admin@tkimph.com',
-            'password' => Hash::make('treebytex2026'),
-            'role' => User::ROLE_ADMIN,
-        ]);
+        User::query()->firstOrCreate(
+            ['email' => 'admin@tkimph.com'],
+            [
+                'name' => 'Admin User',
+                'password' => Hash::make('treebytex2026'),
+                'role' => User::ROLE_ADMIN,
+                'is_active' => true,
+            ]
+        );
 
-        User::factory()->create([
-            'name' => 'Restaurant Owner',
-            'email' => 'owner@tkimph.com',
-            'password' => Hash::make('password'),
-            'role' => User::ROLE_RESTAURANT_OWNER,
-        ]);
+        User::query()->firstOrCreate(
+            ['email' => 'owner@tkimph.com'],
+            [
+                'name' => 'Restaurant Owner',
+                'password' => Hash::make('password'),
+                'role' => User::ROLE_RESTAURANT_OWNER,
+                'is_active' => true,
+            ]
+        );
 
-        User::factory()->create([
-            'name' => 'Rider User',
-            'email' => 'rider@tkimph.com',
-            'password' => Hash::make('password'),
-            'role' => User::ROLE_RIDER,
-        ]);
+        User::query()->firstOrCreate(
+            ['email' => 'rider@tkimph.com'],
+            [
+                'name' => 'Rider User',
+                'password' => Hash::make('password'),
+                'role' => User::ROLE_RIDER,
+                'is_active' => true,
+            ]
+        );
 
-        User::factory()->create([
-            'name' => 'Customer User',
-            'email' => 'customer@tkimph.com',
-            'password' => Hash::make('password'),
-            'role' => User::ROLE_CUSTOMER,
-        ]);
+        User::query()->firstOrCreate(
+            ['email' => 'customer@tkimph.com'],
+            [
+                'name' => 'Customer User',
+                'password' => Hash::make('password'),
+                'role' => User::ROLE_CUSTOMER,
+                'is_active' => true,
+            ]
+        );
+
+        $restaurantType = BusinessType::query()->firstOrCreate(
+            ['slug' => 'restaurant'],
+            [
+                'name' => 'Restaurant',
+                'sort_order' => 0,
+                'is_active' => true,
+                'requires_category' => true,
+                'requires_cuisine' => true,
+            ]
+        );
+
+        BusinessType::query()->firstOrCreate(
+            ['slug' => 'cloud-kitchen'],
+            [
+                'name' => 'Cloud kitchen',
+                'sort_order' => 1,
+                'is_active' => true,
+                'requires_category' => true,
+                'requires_cuisine' => true,
+            ]
+        );
+
+        BusinessType::query()->firstOrCreate(
+            ['slug' => 'shop'],
+            [
+                'name' => 'Shop / Mart',
+                'sort_order' => 2,
+                'is_active' => true,
+                'requires_category' => false,
+                'requires_cuisine' => false,
+            ]
+        );
+
+        $catFastFood = BusinessCategory::query()->firstOrCreate(
+            [
+                'business_type_id' => $restaurantType->id,
+                'name' => 'Fast food',
+            ],
+            ['sort_order' => 0, 'is_active' => true]
+        );
+
+        BusinessCategory::query()->firstOrCreate(
+            [
+                'business_type_id' => $restaurantType->id,
+                'name' => 'Casual dining',
+            ],
+            ['sort_order' => 1, 'is_active' => true]
+        );
+
+        BusinessCategory::query()->firstOrCreate(
+            [
+                'business_type_id' => $restaurantType->id,
+                'name' => 'Café & bakery',
+            ],
+            ['sort_order' => 2, 'is_active' => true]
+        );
+
+        $cuisineFilipino = Cuisine::query()->firstOrCreate(
+            ['name' => 'Filipino'],
+            ['sort_order' => 0, 'is_active' => true]
+        );
+
+        foreach (
+            [
+                ['Pizza', 1],
+                ['Chinese', 2],
+                ['Japanese', 3],
+                ['American', 4],
+                ['Dessert', 5],
+            ] as [$name, $order]
+        ) {
+            Cuisine::query()->firstOrCreate(
+                ['name' => $name],
+                ['sort_order' => $order, 'is_active' => true]
+            );
+        }
 
         $owner = User::where('email', 'owner@tkimph.com')->first();
         if ($owner) {
@@ -53,6 +145,9 @@ class DatabaseSeeder extends Seeder
                     'description' => 'Sample partner restaurant for admin testing.',
                     'phone' => '09171234567',
                     'address' => 'Cebu City, Philippines',
+                    'business_type_id' => $restaurantType->id,
+                    'business_category_id' => $catFastFood->id,
+                    'cuisine_id' => $cuisineFilipino->id,
                     'is_active' => true,
                 ]
             );

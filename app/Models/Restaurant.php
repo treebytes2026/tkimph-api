@@ -15,6 +15,9 @@ class Restaurant extends Model
         'phone',
         'address',
         'user_id',
+        'business_type_id',
+        'business_category_id',
+        'cuisine_id',
         'is_active',
     ];
 
@@ -37,5 +40,20 @@ class Restaurant extends Model
     public function owner(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function businessType(): BelongsTo
+    {
+        return $this->belongsTo(BusinessType::class);
+    }
+
+    public function businessCategory(): BelongsTo
+    {
+        return $this->belongsTo(BusinessCategory::class);
+    }
+
+    public function cuisine(): BelongsTo
+    {
+        return $this->belongsTo(Cuisine::class);
     }
 }

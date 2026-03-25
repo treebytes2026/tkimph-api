@@ -7,6 +7,7 @@ use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Laravel\Sanctum\HasApiTokens;
 
@@ -69,6 +70,11 @@ class User extends Authenticatable
     public function restaurants(): HasMany
     {
         return $this->hasMany(Restaurant::class, 'user_id');
+    }
+
+    public function scopeAdmins(Builder $query): Builder
+    {
+        return $query->where('role', self::ROLE_ADMIN)->where('is_active', true);
     }
 
     public function isAdmin(): bool
