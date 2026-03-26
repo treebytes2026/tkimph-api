@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Models\BusinessCategory;
 use App\Models\BusinessType;
 use App\Models\Cuisine;
+use App\Models\MenuCategory;
 use App\Models\Restaurant;
 use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
@@ -137,9 +138,36 @@ class DatabaseSeeder extends Seeder
             );
         }
 
+        foreach (
+            [
+                ['Appetizers', 0],
+                ['Main course', 1],
+                ['Sides', 2],
+                ['Desserts', 3],
+                ['Beverages', 4],
+                ['Combo meals', 5],
+            ] as [$name, $order]
+        ) {
+            MenuCategory::query()->firstOrCreate(
+                ['name' => $name],
+                ['sort_order' => $order, 'is_active' => true]
+            );
+        }
+
         $owner = User::where('email', 'owner@tkimph.com')->first();
         if ($owner) {
-            Restaurant::query()->firstOrCreate(
+            $defaultOpeningHours = collect(range(0, 6))->map(function (int $day) {
+                $weekday = $day >= 1 && $day <= 5;
+
+                return [
+                    'day' => $day,
+                    'closed' => ! $weekday,
+                    'open' => $weekday ? '09:00' : null,
+                    'close' => $weekday ? '21:00' : null,
+                ];
+            })->values()->all();
+
+            $demo = Restaurant::query()->firstOrCreate(
                 ['user_id' => $owner->id, 'name' => 'Demo Kitchen'],
                 [
                     'description' => 'Sample partner restaurant for admin testing.',
@@ -149,8 +177,14 @@ class DatabaseSeeder extends Seeder
                     'business_category_id' => $catFastFood->id,
                     'cuisine_id' => $cuisineFilipino->id,
                     'is_active' => true,
+                    'opening_hours' => $defaultOpeningHours,
                 ]
             );
+
+            if ($demo->opening_hours === null || $demo->opening_hours === []) {
+                $demo->opening_hours = $defaultOpeningHours;
+                $demo->saveQuietly();
+            }
         }
     }
 }

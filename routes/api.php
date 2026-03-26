@@ -3,6 +3,7 @@
 use App\Http\Controllers\Admin\AdminBusinessCategoryController;
 use App\Http\Controllers\Admin\AdminBusinessTypeController;
 use App\Http\Controllers\Admin\AdminCuisineController;
+use App\Http\Controllers\Admin\AdminMenuCategoryController;
 use App\Http\Controllers\Admin\AdminNotificationController;
 use App\Http\Controllers\Admin\AdminPartnerApplicationController;
 use App\Http\Controllers\Admin\AdminRegistrationStatsController;
@@ -12,9 +13,18 @@ use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\Public\PartnerApplicationController;
+use App\Http\Controllers\Public\PublicDirectoryController;
 use App\Http\Controllers\Public\RegistrationOptionsController;
 use App\Http\Controllers\Public\RiderApplicationController;
+use App\Http\Controllers\Partner\PartnerMenuCategoryController;
+use App\Http\Controllers\Partner\PartnerMenuController;
+use App\Http\Controllers\Partner\PartnerMenuItemController;
 use App\Http\Controllers\Partner\PartnerOverviewController;
+use App\Http\Controllers\Partner\PartnerPasswordController;
+use App\Http\Controllers\Partner\PartnerProfileController;
+use App\Http\Controllers\Partner\PartnerRestaurantImageController;
+use App\Http\Controllers\Partner\PartnerRestaurantProfileController;
+use App\Http\Controllers\Partner\PartnerRestaurantProfilePhotoController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -27,6 +37,10 @@ Route::middleware(['throttle:5,1'])->group(function () {
 
 Route::middleware(['throttle:60,1'])->group(function () {
     Route::get('/public/registration-options', RegistrationOptionsController::class);
+    Route::get('/public/cuisines', [PublicDirectoryController::class, 'cuisines']);
+    Route::get('/public/restaurants/{slug}', [PublicDirectoryController::class, 'show']);
+    Route::get('/public/restaurants', [PublicDirectoryController::class, 'restaurants']);
+    Route::get('/public/restaurants-menu-feed', [PublicDirectoryController::class, 'restaurantsMenuFeed']);
 });
 
 Route::middleware(['throttle:20,1'])->group(function () {
@@ -38,6 +52,27 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/partner/overview', [PartnerOverviewController::class, 'show']);
+    Route::patch('/partner/profile', [PartnerProfileController::class, 'update']);
+    Route::post('/partner/change-password', [PartnerPasswordController::class, 'update']);
+    Route::patch('/partner/restaurants/{restaurant}', [PartnerRestaurantProfileController::class, 'update']);
+    Route::post('/partner/restaurants/{restaurant}/profile-image', [PartnerRestaurantProfilePhotoController::class, 'store']);
+    Route::delete('/partner/restaurants/{restaurant}/profile-image', [PartnerRestaurantProfilePhotoController::class, 'destroy']);
+    Route::post('/partner/restaurants/{restaurant}/location-images', [PartnerRestaurantImageController::class, 'store']);
+    Route::delete('/partner/restaurants/{restaurant}/location-images/{image}', [PartnerRestaurantImageController::class, 'destroy']);
+    Route::get('/partner/menu-categories', [PartnerMenuCategoryController::class, 'index']);
+
+    Route::get('/partner/restaurants/{restaurant}/menus', [PartnerMenuController::class, 'index']);
+    Route::post('/partner/restaurants/{restaurant}/menus', [PartnerMenuController::class, 'store']);
+    Route::get('/partner/restaurants/{restaurant}/menus/{menu}', [PartnerMenuController::class, 'show']);
+    Route::patch('/partner/restaurants/{restaurant}/menus/{menu}', [PartnerMenuController::class, 'update']);
+    Route::delete('/partner/restaurants/{restaurant}/menus/{menu}', [PartnerMenuController::class, 'destroy']);
+
+    Route::post('/partner/restaurants/{restaurant}/menus/{menu}/items', [PartnerMenuItemController::class, 'store']);
+    Route::patch('/partner/restaurants/{restaurant}/menus/{menu}/items/{item}', [PartnerMenuItemController::class, 'update']);
+    Route::delete('/partner/restaurants/{restaurant}/menus/{menu}/items/{item}', [PartnerMenuItemController::class, 'destroy']);
+    Route::post('/partner/restaurants/{restaurant}/menus/{menu}/items/{item}/image', [PartnerMenuItemController::class, 'uploadImage']);
+    Route::delete('/partner/restaurants/{restaurant}/menus/{menu}/items/{item}/image', [PartnerMenuItemController::class, 'deleteImage']);
+
 });
 
 Route::middleware(['auth:sanctum', 'admin'])->prefix('admin')->group(function () {
@@ -68,6 +103,7 @@ Route::middleware(['auth:sanctum', 'admin'])->prefix('admin')->group(function ()
     Route::apiResource('business-types', AdminBusinessTypeController::class);
     Route::apiResource('business-categories', AdminBusinessCategoryController::class);
     Route::apiResource('cuisines', AdminCuisineController::class);
+    Route::apiResource('menu-categories', AdminMenuCategoryController::class);
 
     Route::get('partner-applications', [AdminPartnerApplicationController::class, 'index']);
     Route::get('partner-applications/{partnerApplication}', [AdminPartnerApplicationController::class, 'show']);
