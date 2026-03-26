@@ -17,13 +17,16 @@ class PartnerOverviewController extends Controller
             abort(403, 'Partner access only.');
         }
 
+        // One partner account = one restaurant they manage; other venues register as separate accounts.
         $restaurants = $user->restaurants()
             ->with([
                 'businessType:id,name,slug',
                 'businessCategory:id,name',
                 'cuisine:id,name',
+                'locationImages',
             ])
-            ->orderBy('name')
+            ->orderBy('id')
+            ->limit(1)
             ->get();
 
         return response()->json([
@@ -34,27 +37,7 @@ class PartnerOverviewController extends Controller
                 'phone' => $user->phone,
                 'role' => $user->role,
             ],
-            'restaurants' => $restaurants->map(fn ($r) => [
-                'id' => $r->id,
-                'name' => $r->name,
-                'slug' => $r->slug,
-                'description' => $r->description,
-                'phone' => $r->phone,
-                'address' => $r->address,
-                'is_active' => (bool) $r->is_active,
-                'business_type' => $r->businessType ? [
-                    'id' => $r->businessType->id,
-                    'name' => $r->businessType->name,
-                ] : null,
-                'business_category' => $r->businessCategory ? [
-                    'id' => $r->businessCategory->id,
-                    'name' => $r->businessCategory->name,
-                ] : null,
-                'cuisine' => $r->cuisine ? [
-                    'id' => $r->cuisine->id,
-                    'name' => $r->cuisine->name,
-                ] : null,
-            ]),
+            'restaurants' => $restaurants->map(fn ($r) => $r->toPartnerApiArray()),
         ]);
     }
 }
