@@ -3,8 +3,8 @@
 namespace App\Http\Controllers\Partner;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Partner\Concerns\InteractsWithPartnerRestaurants;
 use App\Models\Restaurant;
-use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -13,13 +13,13 @@ use Illuminate\Support\Str;
 /** Main listing avatar / logo shown as the restaurant’s profile picture. */
 class PartnerRestaurantProfilePhotoController extends Controller
 {
+    use InteractsWithPartnerRestaurants;
+
     public function store(Request $request, Restaurant $restaurant): JsonResponse
     {
         $this->authorizePartnerRestaurant($request, $restaurant);
 
-        $request->validate([
-            'image' => ['required', 'file', 'image', 'max:5120', 'mimes:jpeg,jpg,png,webp,gif'],
-        ]);
+        $this->validatePartnerImageUpload($request);
 
         if ($restaurant->profile_image_path) {
             Storage::disk('public')->delete($restaurant->profile_image_path);
@@ -46,15 +46,5 @@ class PartnerRestaurantProfilePhotoController extends Controller
         }
 
         return response()->json($restaurant->fresh()->toPartnerApiArray());
-    }
-
-    private function authorizePartnerRestaurant(Request $request, Restaurant $restaurant): void
-    {
-        $user = $request->user();
-        abort_unless(
-            $user && $user->role === User::ROLE_RESTAURANT_OWNER && $restaurant->user_id === $user->id,
-            403,
-            'You do not manage this restaurant.'
-        );
     }
 }

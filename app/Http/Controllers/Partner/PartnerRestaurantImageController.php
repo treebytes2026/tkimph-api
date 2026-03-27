@@ -3,15 +3,17 @@
 namespace App\Http\Controllers\Partner;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Partner\Concerns\InteractsWithPartnerRestaurants;
 use App\Models\Restaurant;
 use App\Models\RestaurantImage;
-use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
 class PartnerRestaurantImageController extends Controller
 {
+    use InteractsWithPartnerRestaurants;
+
     private const MAX_IMAGES = 12;
 
     public function store(Request $request, Restaurant $restaurant): JsonResponse
@@ -22,9 +24,7 @@ class PartnerRestaurantImageController extends Controller
             abort(422, 'Maximum of '.self::MAX_IMAGES.' location photos reached.');
         }
 
-        $request->validate([
-            'image' => ['required', 'file', 'image', 'max:5120', 'mimes:jpeg,jpg,png,webp,gif'],
-        ]);
+        $this->validatePartnerImageUpload($request);
 
         $file = $request->file('image');
         $ext = $file->getClientOriginalExtension() ?: 'jpg';
@@ -55,15 +55,5 @@ class PartnerRestaurantImageController extends Controller
         $image->delete();
 
         return response()->json(['message' => 'Removed.']);
-    }
-
-    private function authorizePartnerRestaurant(Request $request, Restaurant $restaurant): void
-    {
-        $user = $request->user();
-        abort_unless(
-            $user && $user->role === User::ROLE_RESTAURANT_OWNER && $restaurant->user_id === $user->id,
-            403,
-            'You do not manage this restaurant.'
-        );
     }
 }

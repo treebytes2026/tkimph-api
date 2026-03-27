@@ -5,6 +5,9 @@ namespace App\Http\Controllers\Public;
 use App\Http\Controllers\Controller;
 use App\Models\Cuisine;
 use App\Models\MenuItem;
+use App\Models\MenuItemReview;
+use App\Models\OrderReview;
+use App\Models\Promotion;
 use App\Models\Restaurant;
 use App\Models\RestaurantImage;
 use Illuminate\Http\JsonResponse;
@@ -33,6 +36,7 @@ class PublicDirectoryController extends Controller
     {
         $query = Restaurant::query()
             ->where('is_active', true)
+            ->where('operating_status', Restaurant::OPERATING_STATUS_OPEN)
             ->with([
                 'cuisine:id,name',
                 'businessType:id,name',
@@ -42,18 +46,31 @@ class PublicDirectoryController extends Controller
                         ->orderBy('id')
                         ->select('id', 'restaurant_id', 'name', 'sort_order');
                 },
+                'promotions' => static function ($q) {
+                    $q->activeAt(now())
+                        ->orderByDesc('priority')
+                        ->orderByDesc('id');
+                },
+            ])
+            ->withAvg([
+                'reviews as reviews_avg_restaurant_rating' => static fn ($q) => $q->where('status', OrderReview::STATUS_PUBLISHED),
+            ], 'restaurant_rating')
+            ->withCount([
+                'reviews as reviews_count' => static fn ($q) => $q->where('status', OrderReview::STATUS_PUBLISHED),
             ]);
 
         if ($request->filled('cuisine_id')) {
             $query->where('cuisine_id', $request->integer('cuisine_id'));
         }
 
-        $total = (clone $query)->count();
         $limit = min(max($request->integer('limit', 24), 1), 60);
         $rows = $query
             ->orderByDesc('id')
-            ->limit($limit)
             ->get();
+        $rows = $rows->filter(fn (Restaurant $restaurant) => $restaurant->isOperationallyAvailable())
+            ->take($limit)
+            ->values();
+        $total = $rows->count();
 
         foreach ($rows as $restaurant) {
             if (blank($restaurant->slug)) {
@@ -72,24 +89,41 @@ class PublicDirectoryController extends Controller
     }
 
     /**
-     * Landing “All restaurants”: each entry is a restaurant plus full menus + items (same shape as GET /public/restaurants/{slug}).
+     * Landing â€œAll restaurantsâ€: each entry is a restaurant plus full menus + items (same shape as GET /public/restaurants/{slug}).
      */
     public function restaurantsMenuFeed(Request $request): JsonResponse
     {
         $query = Restaurant::query()
             ->where('is_active', true)
-            ->with(['cuisine:id,name', 'businessType:id,name']);
+            ->where('operating_status', Restaurant::OPERATING_STATUS_OPEN)
+            ->with([
+                'cuisine:id,name',
+                'businessType:id,name',
+                'promotions' => static function ($q) {
+                    $q->activeAt(now())
+                        ->orderByDesc('priority')
+                        ->orderByDesc('id');
+                },
+            ])
+            ->withAvg([
+                'reviews as reviews_avg_restaurant_rating' => static fn ($q) => $q->where('status', OrderReview::STATUS_PUBLISHED),
+            ], 'restaurant_rating')
+            ->withCount([
+                'reviews as reviews_count' => static fn ($q) => $q->where('status', OrderReview::STATUS_PUBLISHED),
+            ]);
 
         if ($request->filled('cuisine_id')) {
             $query->where('cuisine_id', $request->integer('cuisine_id'));
         }
 
-        $total = (clone $query)->count();
         $limit = min(max($request->integer('limit', 24), 1), 60);
         $rows = $query
             ->orderByDesc('id')
-            ->limit($limit)
             ->get();
+        $rows = $rows->filter(fn (Restaurant $restaurant) => $restaurant->isOperationallyAvailable())
+            ->take($limit)
+            ->values();
+        $total = $rows->count();
 
         foreach ($rows as $restaurant) {
             if (blank($restaurant->slug)) {
@@ -107,6 +141,12 @@ class PublicDirectoryController extends Controller
                 })
                 ->where('is_available', true)
                 ->with(['menu:id,name,sort_order,restaurant_id'])
+                ->withAvg([
+                    'reviews as reviews_avg_rating' => static fn ($q) => $q->where('status', MenuItemReview::STATUS_PUBLISHED),
+                ], 'rating')
+                ->withCount([
+                    'reviews as reviews_count' => static fn ($q) => $q->where('status', MenuItemReview::STATUS_PUBLISHED),
+                ])
                 ->orderBy('sort_order')
                 ->orderBy('name')
                 ->get();
@@ -138,14 +178,28 @@ class PublicDirectoryController extends Controller
         $restaurant = Restaurant::query()
             ->where('slug', $slug)
             ->where('is_active', true)
+            ->where('operating_status', Restaurant::OPERATING_STATUS_OPEN)
             ->with([
                 'cuisine:id,name',
                 'businessType:id,name',
                 'locationImages' => static function ($q) {
                     $q->orderBy('sort_order')->orderBy('id');
                 },
+                'promotions' => static function ($q) {
+                    $q->activeAt(now())
+                        ->orderByDesc('priority')
+                        ->orderByDesc('id');
+                },
+            ])
+            ->withAvg([
+                'reviews as reviews_avg_restaurant_rating' => static fn ($q) => $q->where('status', OrderReview::STATUS_PUBLISHED),
+            ], 'restaurant_rating')
+            ->withCount([
+                'reviews as reviews_count' => static fn ($q) => $q->where('status', OrderReview::STATUS_PUBLISHED),
             ])
             ->firstOrFail();
+
+        abort_unless($restaurant->isOperationallyAvailable(), 404);
 
         $items = MenuItem::query()
             ->whereHas('menu', function ($q) use ($restaurant) {
@@ -153,13 +207,34 @@ class PublicDirectoryController extends Controller
             })
             ->where('is_available', true)
             ->with(['menu:id,name,sort_order'])
+            ->withAvg([
+                'reviews as reviews_avg_rating' => static fn ($q) => $q->where('status', MenuItemReview::STATUS_PUBLISHED),
+            ], 'rating')
+            ->withCount([
+                'reviews as reviews_count' => static fn ($q) => $q->where('status', MenuItemReview::STATUS_PUBLISHED),
+            ])
             ->orderBy('sort_order')
             ->orderBy('name')
+            ->get();
+
+        $reviews = OrderReview::query()
+            ->where('restaurant_id', $restaurant->id)
+            ->where('status', OrderReview::STATUS_PUBLISHED)
+            ->with('customer:id,name')
+            ->orderByDesc('id')
+            ->limit(20)
             ->get();
 
         return response()->json([
             'restaurant' => $this->serializeRestaurant($restaurant, true),
             'menus' => $this->buildMenusPayloadFromItems($items),
+            'reviews' => $reviews->map(fn (OrderReview $review) => [
+                'id' => $review->id,
+                'restaurant_rating' => $review->restaurant_rating,
+                'comment' => $review->comment,
+                'customer_name' => $review->customer?->name,
+                'created_at' => $review->created_at?->toIso8601String(),
+            ])->values()->all(),
         ]);
     }
 
@@ -200,6 +275,8 @@ class PublicDirectoryController extends Controller
             'image_url' => $item->image_path
                 ? Storage::disk('public')->url($item->image_path)
                 : null,
+            'rating' => round((float) ($item->reviews_avg_rating ?? 0), 1),
+            'review_count' => (int) ($item->reviews_count ?? 0),
         ];
     }
 
@@ -243,6 +320,7 @@ class PublicDirectoryController extends Controller
         }
 
         return array_merge($base, $this->listingMeta($r), [
+            'publicly_orderable' => $r->isOperationallyAvailable(),
             'menus' => $r->relationLoaded('menus')
                 ? $r->menus->map(static fn ($m) => [
                     'id' => $m->id,
@@ -253,8 +331,6 @@ class PublicDirectoryController extends Controller
     }
 
     /**
-     * Stable listing-only fields for the marketing site (until real metrics exist in DB).
-     *
      * @return array{
      *   rating: float,
      *   review_count: int,
@@ -264,23 +340,22 @@ class PublicDirectoryController extends Controller
      *   free_delivery_min_spend_php: int,
      *   price_level: int,
      *   promo_label: string|null,
+     *   promotions: array<int, array<string, mixed>>,
      *   is_ad: bool,
      * }
      */
     private function listingMeta(Restaurant $r): array
     {
+        $rating = (float) ($r->reviews_avg_restaurant_rating ?? 0);
+        $reviewCount = (int) ($r->reviews_count ?? 0);
         $h = crc32((string) $r->id);
-        $rating = 4.0 + ($h % 11) / 10;
-        if ($rating > 5.0) {
-            $rating = 5.0;
-        }
-        $reviewCount = 50 + abs($h % 5000) * 11 + abs($h % 97);
         $dMin = 15 + abs($h % 20);
         $dMax = $dMin + 10 + abs($h % 25);
         $fees = [39, 49, 59, 69];
         $fee = $fees[$h % count($fees)];
         $freeMin = [199, 299, 399][(int) (abs($h >> 3) % 3)];
         $level = 1 + abs($h % 3);
+        $promotions = $this->serializePromotions($r);
 
         return [
             'rating' => round($rating, 1),
@@ -290,8 +365,60 @@ class PublicDirectoryController extends Controller
             'delivery_fee_php' => $fee,
             'free_delivery_min_spend_php' => $freeMin,
             'price_level' => $level,
-            'promo_label' => ($h % 3 === 0) ? '10% off ₱450' : null,
+            'promo_label' => $this->bestPromoLabel($promotions),
+            'promotions' => $promotions,
             'is_ad' => ($h % 7 === 0),
         ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function serializePromotions(Restaurant $restaurant): array
+    {
+        if (! $restaurant->relationLoaded('promotions')) {
+            return [];
+        }
+
+        return $restaurant->promotions
+            ->map(function (Promotion $promotion): array {
+                $discountText = $promotion->discount_type === Promotion::TYPE_PERCENTAGE
+                    ? rtrim(rtrim(number_format((float) $promotion->discount_value, 2, '.', ''), '0'), '.').'% off'
+                    : 'PHP '.number_format((float) $promotion->discount_value, 2).' off';
+                $minSpendText = (float) $promotion->min_spend > 0
+                    ? 'min PHP '.number_format((float) $promotion->min_spend, 0)
+                    : null;
+
+                return [
+                    'id' => $promotion->id,
+                    'code' => $promotion->code,
+                    'name' => $promotion->name,
+                    'min_spend' => (float) $promotion->min_spend,
+                    'discount_type' => $promotion->discount_type,
+                    'discount_value' => (float) $promotion->discount_value,
+                    'max_discount_amount' => $promotion->max_discount_amount !== null ? (float) $promotion->max_discount_amount : null,
+                    'stackable' => (bool) $promotion->stackable,
+                    'auto_apply' => (bool) $promotion->auto_apply,
+                    'first_order_only' => (bool) $promotion->first_order_only,
+                    'ends_at' => $promotion->ends_at?->toIso8601String(),
+                    'display_label' => trim($discountText.($minSpendText ? ' | '.$minSpendText : '')),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $promotions
+     */
+    private function bestPromoLabel(array $promotions): ?string
+    {
+        if ($promotions === []) {
+            return null;
+        }
+
+        $label = (string) ($promotions[0]['display_label'] ?? '');
+
+        return $label !== '' ? $label : null;
     }
 }

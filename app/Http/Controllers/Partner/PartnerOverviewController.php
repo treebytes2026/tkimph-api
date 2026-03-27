@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Partner;
 
 use App\Http\Controllers\Controller;
+use App\Models\AdminSetting;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -38,6 +39,10 @@ class PartnerOverviewController extends Controller
                 'role' => $user->role,
             ],
             'restaurants' => $restaurants->map(fn ($r) => $r->toPartnerApiArray()),
+            'settings' => [
+                'partner_self_pause_enabled' => AdminSetting::readBool('partner_self_pause_enabled', true),
+                'partner_cancel_window_minutes' => AdminSetting::readInt('partner_cancel_window_minutes', 15),
+            ],
         ]);
     }
 }

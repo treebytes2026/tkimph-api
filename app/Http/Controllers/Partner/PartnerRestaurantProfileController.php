@@ -3,10 +3,14 @@
 namespace App\Http\Controllers\Partner;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Partner\Concerns\InteractsWithPartnerRestaurants;
 use App\Models\Restaurant;
 use App\Models\User;
+use App\Notifications\AdminSystemNotification;
+use App\Notifications\PartnerSystemNotification;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -15,6 +19,8 @@ use Illuminate\Validation\ValidationException;
  */
 class PartnerRestaurantProfileController extends Controller
 {
+    use InteractsWithPartnerRestaurants;
+
     public function update(Request $request, Restaurant $restaurant): JsonResponse
     {
         $this->authorizePartnerRestaurant($request, $restaurant);
@@ -50,13 +56,46 @@ class PartnerRestaurantProfileController extends Controller
         return response()->json($restaurant->fresh()->toPartnerApiArray());
     }
 
-    private function authorizePartnerRestaurant(Request $request, Restaurant $restaurant): void
+    public function updateAvailability(Request $request, Restaurant $restaurant): JsonResponse
     {
-        $user = $request->user();
-        abort_unless(
-            $user && $user->role === User::ROLE_RESTAURANT_OWNER && $restaurant->user_id === $user->id,
-            403,
-            'You do not manage this restaurant.'
-        );
+        $user = $this->authorizePartnerRestaurant($request, $restaurant);
+        abort_unless($this->partnerSelfPauseEnabled(), 422, 'Partner self-pause is disabled by admin.');
+
+        $data = $request->validate([
+            'operating_status' => ['required', 'in:open,paused'],
+            'operating_note' => ['nullable', 'string', 'max:1000'],
+            'paused_until' => ['nullable', 'date'],
+        ]);
+
+        $restaurant->update([
+            'operating_status' => $data['operating_status'],
+            'operating_note' => $data['operating_note'] ?? null,
+            'paused_until' => $data['operating_status'] === Restaurant::OPERATING_STATUS_PAUSED && ! empty($data['paused_until'])
+                ? Carbon::parse($data['paused_until'])
+                : null,
+        ]);
+
+        User::query()
+            ->admins()
+            ->each(fn ($admin) => $admin->notify(new AdminSystemNotification(
+                $data['operating_status'] === Restaurant::OPERATING_STATUS_PAUSED ? 'store_paused' : 'store_resumed',
+                $restaurant->name.' is now '.str_replace('_', ' ', $data['operating_status']).'.',
+                [
+                    'restaurant_id' => $restaurant->id,
+                    'restaurant_name' => $restaurant->name,
+                    'operating_status' => $data['operating_status'],
+                ]
+            )));
+
+        $user->notify(new PartnerSystemNotification(
+            'store_status_changed',
+            'Your store status is now '.str_replace('_', ' ', $data['operating_status']).'.',
+            [
+                'restaurant_id' => $restaurant->id,
+                'operating_status' => $data['operating_status'],
+            ]
+        ));
+
+        return response()->json($restaurant->fresh()->toPartnerApiArray());
     }
 }
