@@ -4,9 +4,13 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Restaurant;
+use App\Models\SupportNote;
 use App\Models\User;
+use App\Notifications\PartnerSystemNotification;
+use App\Support\OrderWorkflow;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 class AdminRestaurantController extends Controller
 {
     public function index(Request $request): JsonResponse
@@ -16,6 +20,7 @@ class AdminRestaurantController extends Controller
             'businessType:id,name,slug',
             'businessCategory:id,name',
             'cuisine:id,name',
+            'menus.items',
         ]);
 
         if ($request->boolean('active_only')) {
@@ -32,6 +37,7 @@ class AdminRestaurantController extends Controller
         }
 
         $restaurants = $query->orderByDesc('id')->paginate($request->integer('per_page', 15));
+        $restaurants->getCollection()->transform(fn (Restaurant $restaurant) => $this->serializeRestaurant($restaurant));
 
         return response()->json($restaurants);
     }
@@ -48,6 +54,9 @@ class AdminRestaurantController extends Controller
             'business_category_id' => ['nullable', 'integer', 'exists:business_categories,id'],
             'cuisine_id' => ['nullable', 'integer', 'exists:cuisines,id'],
             'is_active' => ['sometimes', 'boolean'],
+            'operating_status' => ['sometimes', Rule::in(Restaurant::OPERATING_STATUSES)],
+            'operating_note' => ['nullable', 'string', 'max:1000'],
+            'force_publicly_orderable' => ['sometimes', 'boolean'],
         ]);
 
         $owner = User::findOrFail($data['user_id']);
@@ -56,6 +65,7 @@ class AdminRestaurantController extends Controller
         }
 
         $data['is_active'] = $data['is_active'] ?? true;
+        $data['operating_status'] = $data['operating_status'] ?? Restaurant::OPERATING_STATUS_OPEN;
         $restaurant = Restaurant::create($data);
 
         return response()->json($this->serializeRestaurant($restaurant->load([
@@ -63,6 +73,7 @@ class AdminRestaurantController extends Controller
             'businessType:id,name,slug',
             'businessCategory:id,name',
             'cuisine:id,name',
+            'menus.items',
         ])), 201);
     }
 
@@ -73,7 +84,9 @@ class AdminRestaurantController extends Controller
             'businessType:id,name,slug',
             'businessCategory:id,name',
             'cuisine:id,name',
-        ])));
+            'menus.items',
+            'supportNotes.admin:id,name,email',
+        ]), true));
     }
 
     public function update(Request $request, Restaurant $restaurant): JsonResponse
@@ -88,6 +101,9 @@ class AdminRestaurantController extends Controller
             'business_category_id' => ['nullable', 'integer', 'exists:business_categories,id'],
             'cuisine_id' => ['nullable', 'integer', 'exists:cuisines,id'],
             'is_active' => ['sometimes', 'boolean'],
+            'operating_status' => ['sometimes', Rule::in(Restaurant::OPERATING_STATUSES)],
+            'operating_note' => ['nullable', 'string', 'max:1000'],
+            'force_publicly_orderable' => ['sometimes', 'boolean'],
         ]);
 
         if (isset($data['user_id'])) {
@@ -104,7 +120,9 @@ class AdminRestaurantController extends Controller
             'businessType:id,name,slug',
             'businessCategory:id,name',
             'cuisine:id,name',
-        ])));
+            'menus.items',
+            'supportNotes.admin:id,name,email',
+        ]), true));
     }
 
     public function destroy(Restaurant $restaurant): JsonResponse
@@ -123,7 +141,106 @@ class AdminRestaurantController extends Controller
             'businessType:id,name,slug',
             'businessCategory:id,name',
             'cuisine:id,name',
+            'menus.items',
         ])));
+    }
+
+    public function updateOperatingStatus(Request $request, Restaurant $restaurant): JsonResponse
+    {
+        $data = $request->validate([
+            'operating_status' => ['required', Rule::in(Restaurant::OPERATING_STATUSES)],
+            'operating_note' => ['required', 'string', 'max:1000'],
+            'paused_until' => ['nullable', 'date'],
+        ]);
+
+        $restaurant->update([
+            'operating_status' => $data['operating_status'],
+            'operating_note' => $data['operating_note'],
+            'paused_until' => $data['operating_status'] === Restaurant::OPERATING_STATUS_PAUSED
+                ? $data['paused_until'] ?? null
+                : null,
+        ]);
+
+        if ($restaurant->owner) {
+            $restaurant->owner->notify(new PartnerSystemNotification(
+                $data['operating_status'] === Restaurant::OPERATING_STATUS_SUSPENDED ? 'partner_suspended' : 'store_status_changed',
+                'Admin changed your store status to '.str_replace('_', ' ', $data['operating_status']).'.',
+                [
+                    'restaurant_id' => $restaurant->id,
+                    'restaurant_name' => $restaurant->name,
+                    'operating_status' => $data['operating_status'],
+                    'operating_note' => $data['operating_note'],
+                ]
+            ));
+        }
+
+        return response()->json($this->serializeRestaurant($restaurant->fresh()->load([
+            'owner:id,name,email,role',
+            'businessType:id,name,slug',
+            'businessCategory:id,name',
+            'cuisine:id,name',
+            'menus.items',
+            'supportNotes.admin:id,name,email',
+        ]), true));
+    }
+
+    public function setPublicOrderOverride(Request $request, Restaurant $restaurant): JsonResponse
+    {
+        $data = $request->validate([
+            'force_publicly_orderable' => ['required', 'boolean'],
+        ]);
+
+        $restaurant->update([
+            'force_publicly_orderable' => $data['force_publicly_orderable'],
+        ]);
+
+        return response()->json($this->serializeRestaurant($restaurant->fresh()->load([
+            'owner:id,name,email,role',
+            'businessType:id,name,slug',
+            'businessCategory:id,name',
+            'cuisine:id,name',
+            'menus.items',
+            'supportNotes.admin:id,name,email',
+        ]), true));
+    }
+
+    public function settlementSummary(Request $request, Restaurant $restaurant): JsonResponse
+    {
+        $query = $restaurant->orders()
+            ->whereNotIn('status', [\App\Models\Order::STATUS_CANCELLED, \App\Models\Order::STATUS_FAILED]);
+
+        if ($request->filled('date_from')) {
+            $query->whereDate('placed_at', '>=', $request->string('date_from')->toString());
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereDate('placed_at', '<=', $request->string('date_to')->toString());
+        }
+
+        $orders = $query->get();
+
+        return response()->json([
+            'restaurant_id' => $restaurant->id,
+            'restaurant_name' => $restaurant->name,
+            'order_count' => $orders->count(),
+            'gross_sales' => round((float) $orders->sum('gross_sales'), 2),
+            'service_fees' => round((float) $orders->sum('service_fee'), 2),
+            'delivery_fees' => round((float) $orders->sum('delivery_fee'), 2),
+            'restaurant_net' => round((float) $orders->sum('restaurant_net'), 2),
+            'pending_settlement_amount' => round((float) $orders->where('status', '!=', \App\Models\Order::STATUS_COMPLETED)->sum('restaurant_net'), 2),
+        ]);
+    }
+
+    public function storeSupportNote(Request $request, Restaurant $restaurant): JsonResponse
+    {
+        $data = $request->validate([
+            'note_type' => ['required', Rule::in(SupportNote::TYPES)],
+            'body' => ['required', 'string', 'max:2000'],
+        ]);
+
+        $note = OrderWorkflow::addSupportNote($restaurant->id, null, $request->user(), $data['note_type'], $data['body']);
+
+        return response()->json($this->serializeSupportNote($note->load('admin:id,name,email')), 201);
     }
 
     /** Partners dropdown for forms */
@@ -138,8 +255,10 @@ class AdminRestaurantController extends Controller
         return response()->json($owners);
     }
 
-    private function serializeRestaurant(Restaurant $r): array
+    private function serializeRestaurant(Restaurant $r, bool $includeSupportNotes = false): array
     {
+        $readiness = $r->readinessStatus();
+
         return [
             'id' => $r->id,
             'name' => $r->name,
@@ -152,6 +271,13 @@ class AdminRestaurantController extends Controller
             'business_category_id' => $r->business_category_id,
             'cuisine_id' => $r->cuisine_id,
             'is_active' => (bool) $r->is_active,
+            'operating_status' => $r->operating_status ?? Restaurant::OPERATING_STATUS_OPEN,
+            'operating_note' => $r->operating_note,
+            'paused_until' => $r->paused_until?->toIso8601String(),
+            'publicly_orderable' => $r->isOperationallyAvailable(),
+            'force_publicly_orderable' => (bool) $r->force_publicly_orderable,
+            'readiness_status' => $readiness['status'],
+            'readiness_checks' => $readiness['checks'],
             'business_type' => $r->businessType ? [
                 'id' => $r->businessType->id,
                 'name' => $r->businessType->name,
@@ -173,6 +299,24 @@ class AdminRestaurantController extends Controller
             ] : null,
             'created_at' => $r->created_at?->toIso8601String(),
             'updated_at' => $r->updated_at?->toIso8601String(),
+            'support_notes' => $includeSupportNotes
+                ? $r->supportNotes->map(fn (SupportNote $note) => $this->serializeSupportNote($note))->values()->all()
+                : [],
+        ];
+    }
+
+    private function serializeSupportNote(SupportNote $note): array
+    {
+        return [
+            'id' => $note->id,
+            'note_type' => $note->note_type,
+            'body' => $note->body,
+            'admin' => $note->admin ? [
+                'id' => $note->admin->id,
+                'name' => $note->admin->name,
+                'email' => $note->admin->email,
+            ] : null,
+            'created_at' => $note->created_at?->toIso8601String(),
         ];
     }
 }

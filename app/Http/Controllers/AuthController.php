@@ -78,6 +78,10 @@ class AuthController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'role' => $user->role,
+                'phone' => $user->phone,
+                'address' => $user->address,
+                'email_verified' => (bool) $user->email_verified_at,
+                'phone_verified' => (bool) $user->phone_verified_at,
             ],
             'token' => $token,
         ]);
@@ -92,6 +96,10 @@ class AuthController extends Controller
             'name' => $user->name,
             'email' => $user->email,
             'role' => $user->role,
+            'phone' => $user->phone,
+            'address' => $user->address,
+            'email_verified' => (bool) $user->email_verified_at,
+            'phone_verified' => (bool) $user->phone_verified_at,
         ]);
     }
 

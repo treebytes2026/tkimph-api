@@ -41,6 +41,7 @@ class User extends Authenticatable
         'phone',
         'address',
         'is_active',
+        'phone_verified_at',
     ];
 
     /**
@@ -51,6 +52,8 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+        'email_verification_code',
+        'phone_verification_code',
     ];
 
     /**
@@ -62,14 +65,52 @@ class User extends Authenticatable
     {
         return [
             'email_verified_at' => 'datetime',
+            'phone_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_active' => 'boolean',
+            'email_verification_code_expires_at' => 'datetime',
+            'phone_verification_code_expires_at' => 'datetime',
         ];
     }
 
     public function restaurants(): HasMany
     {
         return $this->hasMany(Restaurant::class, 'user_id');
+    }
+
+    public function assignedOrders(): HasMany
+    {
+        return $this->hasMany(Order::class, 'rider_id');
+    }
+
+    public function orderAdminNotes(): HasMany
+    {
+        return $this->hasMany(OrderAdminNote::class, 'admin_id');
+    }
+
+    public function orderEvents(): HasMany
+    {
+        return $this->hasMany(OrderEvent::class, 'actor_user_id');
+    }
+
+    public function supportNotes(): HasMany
+    {
+        return $this->hasMany(SupportNote::class, 'admin_id');
+    }
+
+    public function promotionRedemptions(): HasMany
+    {
+        return $this->hasMany(PromotionRedemption::class);
+    }
+
+    public function orderIssues(): HasMany
+    {
+        return $this->hasMany(OrderIssue::class, 'customer_id');
+    }
+
+    public function orderReviews(): HasMany
+    {
+        return $this->hasMany(OrderReview::class, 'customer_id');
     }
 
     public function scopeAdmins(Builder $query): Builder
