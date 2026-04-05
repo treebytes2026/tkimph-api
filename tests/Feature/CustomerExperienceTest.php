@@ -51,6 +51,42 @@ class CustomerExperienceTest extends TestCase
         ])->assertCreated()->assertJsonPath('order.discounts_total', 30);
     }
 
+    public function test_customer_order_uses_effective_menu_or_dish_discounted_price(): void
+    {
+        [$customer, $restaurant, $item] = $this->createCustomerRestaurantItem();
+
+        $item->menu()->update([
+            'discount_enabled' => true,
+            'discount_percent' => 10,
+        ]);
+        $item->update([
+            'discount_enabled' => true,
+            'discount_percent' => 20,
+        ]);
+
+        Sanctum::actingAs($customer);
+
+        $response = $this->postJson('/api/customer/orders', [
+            'restaurant_id' => $restaurant->id,
+            'delivery_mode' => 'delivery',
+            'payment_method' => 'cod',
+            'delivery_address' => 'Sample Address',
+            'items' => [
+                ['item_id' => $item->id, 'qty' => 1],
+            ],
+        ])->assertCreated();
+
+        $response
+            ->assertJsonPath('order.subtotal', 120)
+            ->assertJsonPath('order.total', 120);
+
+        $this->assertDatabaseHas('order_items', [
+            'menu_item_id' => $item->id,
+            'unit_price' => 120.00,
+            'line_total' => 120.00,
+        ]);
+    }
+
     public function test_customer_can_request_cancellation_within_window(): void
     {
         AdminSetting::write('customer_cancel_window_minutes', '15');

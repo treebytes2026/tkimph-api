@@ -7,7 +7,11 @@ use App\Models\AdminSetting;
 use App\Models\Order;
 use App\Models\User;
 use App\Notifications\AdminSystemNotification;
+use App\Support\CustomerOrderBroadcaster;
+use App\Support\CommissionCollectionMonitor;
 use App\Support\OrderWorkflow;
+use App\Support\PlatformPricing;
+use App\Support\RiderRealtimeBroadcaster;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -102,6 +106,9 @@ class PartnerOrderController extends Controller
                 ]
             )));
 
+        RiderRealtimeBroadcaster::notifyRiderAndPool($order->rider_id, 'partner_order_status_changed');
+        CustomerOrderBroadcaster::notifyOrder($order->customer_id, $order->id, 'partner_order_status_changed');
+
         return response()->json([
             'message' => 'Order status updated.',
             'order' => $this->serializeOrder($order->fresh()->load(['items', 'customer:id,name,phone', 'restaurant:id,name', 'events.actor:id,name,email,role'])),
@@ -110,6 +117,8 @@ class PartnerOrderController extends Controller
 
     public function earnings(Request $request): JsonResponse
     {
+        CommissionCollectionMonitor::processOverdueCollections();
+
         $user = $this->partner($request);
         $restaurant = $user->restaurants()->orderBy('id')->first();
         abort_unless($restaurant, 404, 'No restaurant linked to this account.');
@@ -133,10 +142,14 @@ class PartnerOrderController extends Controller
             'restaurant_name' => $restaurant->name,
             'order_count' => $orders->count(),
             'gross_sales' => round((float) $orders->sum('gross_sales'), 2),
-            'service_fees' => round((float) $orders->sum('service_fee'), 2),
+            'commission_rate' => PlatformPricing::commissionRate(),
+            'platform_commission' => round((float) $orders->sum('service_fee'), 2),
             'delivery_fees' => round((float) $orders->sum('delivery_fee'), 2),
             'restaurant_net' => round((float) $orders->sum('restaurant_net'), 2),
-            'pending_settlement_amount' => round((float) $orders->where('status', '!=', Order::STATUS_COMPLETED)->sum('restaurant_net'), 2),
+            'payment_details' => [
+                'gcash_name' => AdminSetting::read('commission_payment_gcash_name', ''),
+                'gcash_number' => AdminSetting::read('commission_payment_gcash_number', ''),
+            ],
         ]);
     }
 

@@ -7,6 +7,7 @@ use App\Models\Menu;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\Restaurant;
+use App\Support\MenuPricing;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -25,6 +26,8 @@ class PartnerMenuItemController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:5000'],
             'price' => ['required', 'numeric', 'min:0', 'max:99999999.99'],
+            'discount_enabled' => ['sometimes', 'boolean'],
+            'discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'sort_order' => ['nullable', 'integer', 'min:0', 'max:65535'],
             'is_available' => ['sometimes', 'boolean'],
         ]);
@@ -34,10 +37,13 @@ class PartnerMenuItemController extends Controller
 
         $data['sort_order'] = $data['sort_order'] ?? ((int) ($menu->items()->max('sort_order') ?? -1) + 1);
         $data['is_available'] = $data['is_available'] ?? true;
+        $data['discount_enabled'] = $data['discount_enabled'] ?? false;
+        $data['discount_percent'] = MenuPricing::normalizeDiscountPercent((float) ($data['discount_percent'] ?? 0));
 
         $item = $menu->items()->create($data);
+        MenuPricing::applyCommissionSnapshot($item->fresh()->load('menu'));
 
-        return response()->json($item->load('menuCategory'), 201);
+        return response()->json($item->fresh()->load(['menu', 'menuCategory']), 201);
     }
 
     public function update(Request $request, Restaurant $restaurant, Menu $menu, MenuItem $item): JsonResponse
@@ -50,6 +56,8 @@ class PartnerMenuItemController extends Controller
             'name' => ['sometimes', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:5000'],
             'price' => ['sometimes', 'numeric', 'min:0', 'max:99999999.99'],
+            'discount_enabled' => ['sometimes', 'boolean'],
+            'discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'sort_order' => ['nullable', 'integer', 'min:0', 'max:65535'],
             'is_available' => ['sometimes', 'boolean'],
         ]);
@@ -59,9 +67,14 @@ class PartnerMenuItemController extends Controller
             abort_unless($category, 422, 'Menu category is invalid or inactive.');
         }
 
-        $item->update($data);
+        if (array_key_exists('discount_percent', $data)) {
+            $data['discount_percent'] = MenuPricing::normalizeDiscountPercent((float) $data['discount_percent']);
+        }
 
-        return response()->json($item->fresh()->load('menuCategory'));
+        $item->update($data);
+        MenuPricing::applyCommissionSnapshot($item->fresh()->load('menu'));
+
+        return response()->json($item->fresh()->load(['menu', 'menuCategory']));
     }
 
     /** Upload or replace the optional photo for this dish (shown in the dish list). */
@@ -121,4 +134,5 @@ class PartnerMenuItemController extends Controller
             'You do not manage this restaurant.'
         );
     }
+
 }

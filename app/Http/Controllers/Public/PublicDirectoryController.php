@@ -10,6 +10,8 @@ use App\Models\OrderReview;
 use App\Models\Promotion;
 use App\Models\Restaurant;
 use App\Models\RestaurantImage;
+use App\Support\CommissionCollectionMonitor;
+use App\Support\PlatformPricing;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -23,6 +25,8 @@ class PublicDirectoryController extends Controller
 {
     public function cuisines(): JsonResponse
     {
+        CommissionCollectionMonitor::processOverdueCollections();
+
         $rows = Cuisine::query()
             ->where('is_active', true)
             ->orderBy('sort_order')
@@ -34,6 +38,8 @@ class PublicDirectoryController extends Controller
 
     public function restaurants(Request $request): JsonResponse
     {
+        CommissionCollectionMonitor::processOverdueCollections();
+
         $query = Restaurant::query()
             ->where('is_active', true)
             ->where('operating_status', Restaurant::OPERATING_STATUS_OPEN)
@@ -93,6 +99,8 @@ class PublicDirectoryController extends Controller
      */
     public function restaurantsMenuFeed(Request $request): JsonResponse
     {
+        CommissionCollectionMonitor::processOverdueCollections();
+
         $query = Restaurant::query()
             ->where('is_active', true)
             ->where('operating_status', Restaurant::OPERATING_STATUS_OPEN)
@@ -175,6 +183,8 @@ class PublicDirectoryController extends Controller
 
     public function show(string $slug): JsonResponse
     {
+        CommissionCollectionMonitor::processOverdueCollections();
+
         $restaurant = Restaurant::query()
             ->where('slug', $slug)
             ->where('is_active', true)
@@ -266,11 +276,20 @@ class PublicDirectoryController extends Controller
 
     private function serializeMenuItem(MenuItem $item): array
     {
+        $discountPercent = $item->effectiveDiscountPercent();
+        $discountedPrice = $item->discountedPrice();
+
         return [
             'id' => $item->id,
             'name' => $item->name,
             'description' => $item->description,
-            'price' => $item->price,
+            'price' => $discountedPrice,
+            'original_price' => (float) $item->price,
+            'has_discount' => $discountPercent > 0,
+            'discount_percent' => $discountPercent,
+            'commission_rate' => (float) $item->commission_rate,
+            'platform_commission' => (float) $item->platform_commission,
+            'restaurant_net' => (float) $item->restaurant_net,
             'image_path' => $item->image_path,
             'image_url' => $item->image_path
                 ? Storage::disk('public')->url($item->image_path)
@@ -351,8 +370,8 @@ class PublicDirectoryController extends Controller
         $h = crc32((string) $r->id);
         $dMin = 15 + abs($h % 20);
         $dMax = $dMin + 10 + abs($h % 25);
-        $fees = [39, 49, 59, 69];
-        $fee = $fees[$h % count($fees)];
+        $standardFee = (int) round(PlatformPricing::standardDeliveryFee());
+        $fee = (int) round(PlatformPricing::activeDeliveryFee());
         $freeMin = [199, 299, 399][(int) (abs($h >> 3) % 3)];
         $level = 1 + abs($h % 3);
         $promotions = $this->serializePromotions($r);
@@ -363,6 +382,7 @@ class PublicDirectoryController extends Controller
             'delivery_min_minutes' => $dMin,
             'delivery_max_minutes' => $dMax,
             'delivery_fee_php' => $fee,
+            'standard_delivery_fee_php' => $standardFee,
             'free_delivery_min_spend_php' => $freeMin,
             'price_level' => $level,
             'promo_label' => $this->bestPromoLabel($promotions),

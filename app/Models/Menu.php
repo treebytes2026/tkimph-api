@@ -13,12 +13,16 @@ class Menu extends Model
         'name',
         'sort_order',
         'is_active',
+        'discount_enabled',
+        'discount_percent',
     ];
 
     protected function casts(): array
     {
         return [
             'is_active' => 'boolean',
+            'discount_enabled' => 'boolean',
+            'discount_percent' => 'decimal:2',
         ];
     }
 

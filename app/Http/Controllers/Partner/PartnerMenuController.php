@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Partner;
 use App\Http\Controllers\Controller;
 use App\Models\Menu;
 use App\Models\Restaurant;
+use App\Support\MenuPricing;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -32,10 +33,14 @@ class PartnerMenuController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'sort_order' => ['nullable', 'integer', 'min:0', 'max:65535'],
             'is_active' => ['sometimes', 'boolean'],
+            'discount_enabled' => ['sometimes', 'boolean'],
+            'discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ]);
 
         $data['sort_order'] = $data['sort_order'] ?? ((int) ($restaurant->menus()->max('sort_order') ?? -1) + 1);
         $data['is_active'] = $data['is_active'] ?? true;
+        $data['discount_enabled'] = $data['discount_enabled'] ?? false;
+        $data['discount_percent'] = MenuPricing::normalizeDiscountPercent((float) ($data['discount_percent'] ?? 0));
 
         $menu = $restaurant->menus()->create($data);
 
@@ -66,9 +71,19 @@ class PartnerMenuController extends Controller
             'name' => ['sometimes', 'string', 'max:255'],
             'sort_order' => ['nullable', 'integer', 'min:0', 'max:65535'],
             'is_active' => ['sometimes', 'boolean'],
+            'discount_enabled' => ['sometimes', 'boolean'],
+            'discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ]);
 
+        if (array_key_exists('discount_percent', $data)) {
+            $data['discount_percent'] = MenuPricing::normalizeDiscountPercent((float) $data['discount_percent']);
+        }
+
         $menu->update($data);
+
+        if (array_key_exists('discount_enabled', $data) || array_key_exists('discount_percent', $data)) {
+            MenuPricing::applyCommissionSnapshotForMenu($menu->fresh()->load('items.menu'));
+        }
 
         return response()->json($menu->fresh()->loadCount(['items']));
     }

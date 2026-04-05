@@ -40,4 +40,9 @@ class AdminSetting extends Model
     {
         return (int) static::read($key, (string) $default);
     }
+
+    public static function readFloat(string $key, float $default): float
+    {
+        return (float) static::read($key, (string) $default);
+    }
 }

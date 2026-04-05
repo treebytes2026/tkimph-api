@@ -13,8 +13,13 @@ use App\Models\Restaurant;
 use App\Models\User;
 use App\Notifications\AdminSystemNotification;
 use App\Notifications\NewPartnerOrderNotification;
+use App\Support\CustomerOrderBroadcaster;
+use App\Support\CommissionCollectionMonitor;
+use App\Support\MenuPricing;
 use App\Support\OrderWorkflow;
+use App\Support\PlatformPricing;
 use App\Support\PromotionEngine;
+use App\Support\RiderRealtimeBroadcaster;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -24,9 +29,6 @@ use Illuminate\Validation\ValidationException;
 
 class CustomerOrderController extends Controller
 {
-    private const SERVICE_FEE = 5.0;
-    private const DELIVERY_FEE = 0.0;
-
     public function index(Request $request): JsonResponse
     {
         $customer = $this->customer($request);
@@ -35,9 +37,11 @@ class CustomerOrderController extends Controller
             ->with([
                 'items.menuItem:id,image_path',
                 'restaurant:id,name,slug,address,profile_image_path',
+                'rider:id,name,phone',
                 'discounts',
                 'issues',
                 'review',
+                'events.actor:id,name,role',
             ])
             ->where('customer_id', $customer->id)
             ->orderByDesc('id')
@@ -49,6 +53,26 @@ class CustomerOrderController extends Controller
             'last_page' => $orders->lastPage(),
             'per_page' => $orders->perPage(),
             'total' => $orders->total(),
+        ]);
+    }
+
+    public function show(Request $request, Order $order): JsonResponse
+    {
+        $customer = $this->customer($request);
+        $this->assertOwnedOrder($order, $customer);
+
+        $order->load([
+            'items.menuItem:id,image_path',
+            'restaurant:id,name,slug,address,profile_image_path',
+            'rider:id,name,phone',
+            'discounts',
+            'issues',
+            'review',
+            'events.actor:id,name,role',
+        ]);
+
+        return response()->json([
+            'order' => $this->serializeOrder($order),
         ]);
     }
 
@@ -80,6 +104,8 @@ class CustomerOrderController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        CommissionCollectionMonitor::processOverdueCollections();
+
         $customer = $this->customer($request);
 
         $data = $request->validate([
@@ -130,7 +156,7 @@ class CustomerOrderController extends Controller
             foreach ($data['items'] as $line) {
                 $menuItem = $itemsById->get((int) $line['item_id']);
                 $qty = (int) $line['qty'];
-                $unitPrice = (float) $menuItem->price;
+                $unitPrice = MenuPricing::discountedPriceForItem($menuItem->loadMissing('menu'));
                 $lineTotal = $qty * $unitPrice;
                 $subtotal += $lineTotal;
 
@@ -159,10 +185,9 @@ class CustomerOrderController extends Controller
             }
 
             $discountAmount = (float) $promoResult['discount_amount'];
-            $serviceFee = self::SERVICE_FEE;
-            $deliveryFee = $data['delivery_mode'] === 'delivery' ? self::DELIVERY_FEE : 0.0;
-            $settlement = OrderWorkflow::settlementFields($subtotal, $serviceFee, $deliveryFee);
-            $total = max(0, $subtotal + $serviceFee + $deliveryFee - $discountAmount);
+            $deliveryFee = $data['delivery_mode'] === 'delivery' ? PlatformPricing::activeDeliveryFee() : 0.0;
+            $settlement = OrderWorkflow::settlementFields($subtotal, $deliveryFee);
+            $total = max(0, $subtotal + $deliveryFee - $discountAmount);
 
             $paymentMethod = $data['payment_method'];
             $paymentStatus = $paymentMethod === 'cod' ? 'unpaid' : 'paid';
@@ -181,7 +206,7 @@ class CustomerOrderController extends Controller
                 'delivery_note' => $data['delivery_note'] ?? null,
                 'location_label' => $data['location_label'] ?? null,
                 'subtotal' => $subtotal,
-                'service_fee' => $serviceFee,
+                'service_fee' => $settlement['service_fee'],
                 'delivery_fee' => $settlement['delivery_fee'],
                 'discounts_total' => $discountAmount,
                 'gross_sales' => $settlement['gross_sales'],
@@ -245,12 +270,17 @@ class CustomerOrderController extends Controller
                     ]
                 )));
 
+            RiderRealtimeBroadcaster::notifyPool('customer_order_created');
+            CustomerOrderBroadcaster::notifyOrder($customer->id, $order->id, 'customer_order_created');
+
             return $order->load([
                 'items.menuItem:id,image_path',
                 'restaurant:id,name,slug,address,profile_image_path',
+                'rider:id,name,phone',
                 'discounts',
                 'issues',
                 'review',
+                'events.actor:id,name,role',
             ]);
         });
 
@@ -295,6 +325,7 @@ class CustomerOrderController extends Controller
             $data['reason'],
             ['issue_id' => $issue->id]
         );
+        CustomerOrderBroadcaster::notifyOrder($order->customer_id, $order->id, 'customer_cancel_requested');
 
         return response()->json([
             'message' => 'Cancellation request submitted.',
@@ -352,6 +383,7 @@ class CustomerOrderController extends Controller
             $data['subject'],
             ['issue_id' => $issue->id, 'issue_type' => $data['issue_type']]
         );
+        CustomerOrderBroadcaster::notifyOrder($order->customer_id, $order->id, 'customer_issue_created');
 
         return response()->json([
             'message' => 'Issue submitted successfully.',
@@ -543,6 +575,11 @@ class CustomerOrderController extends Controller
                     ? Storage::disk('public')->url($order->restaurant->profile_image_path)
                     : null,
             ] : null,
+            'rider' => $order->rider ? [
+                'id' => $order->rider->id,
+                'name' => $order->rider->name,
+                'phone' => $order->rider->phone,
+            ] : null,
             'items' => $order->items->map(static fn ($item) => [
                 'id' => $item->id,
                 'menu_item_id' => $item->menu_item_id,
@@ -569,6 +606,54 @@ class CustomerOrderController extends Controller
             'review' => $order->relationLoaded('review') && $order->review
                 ? $this->serializeReview($order->review)
                 : null,
+            'timeline' => $order->relationLoaded('events')
+                ? $order->events->map(fn ($event) => [
+                    'id' => $event->id,
+                    'event_type' => $event->event_type,
+                    'from_status' => $event->from_status,
+                    'to_status' => $event->to_status,
+                    'note' => $event->note,
+                    'actor' => $event->actor ? [
+                        'id' => $event->actor->id,
+                        'name' => $event->actor->name,
+                        'role' => $event->actor->role,
+                    ] : null,
+                    'meta' => $event->meta,
+                    'created_at' => optional($event->created_at)->toIso8601String(),
+                ])->values()->all()
+                : [],
+            'live_location' => $this->latestRiderLocationFromEvents($order),
+        ];
+    }
+
+    private function latestRiderLocationFromEvents(Order $order): ?array
+    {
+        if (! $order->relationLoaded('events')) {
+            return null;
+        }
+
+        $event = $order->events
+            ->filter(fn ($evt) => $evt->event_type === 'rider_location_ping')
+            ->sortByDesc(fn ($evt) => optional($evt->created_at)?->getTimestamp() ?? 0)
+            ->first();
+
+        if (! $event || ! is_array($event->meta)) {
+            return null;
+        }
+
+        $latitude = $event->meta['latitude'] ?? null;
+        $longitude = $event->meta['longitude'] ?? null;
+        if (! is_numeric($latitude) || ! is_numeric($longitude)) {
+            return null;
+        }
+
+        return [
+            'latitude' => (float) $latitude,
+            'longitude' => (float) $longitude,
+            'accuracy_meters' => isset($event->meta['accuracy_meters']) && is_numeric($event->meta['accuracy_meters'])
+                ? (float) $event->meta['accuracy_meters']
+                : null,
+            'recorded_at' => $event->meta['recorded_at'] ?? optional($event->created_at)->toIso8601String(),
         ];
     }
 
