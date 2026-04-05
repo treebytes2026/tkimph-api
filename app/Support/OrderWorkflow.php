@@ -47,12 +47,16 @@ class OrderWorkflow
             && $placedAt->greaterThanOrEqualTo(now()->subMinutes($cancelWindow));
     }
 
-    public static function settlementFields(float $subtotal, float $serviceFee, float $deliveryFee): array
+    public static function settlementFields(float $subtotal, float $deliveryFee): array
     {
+        $platformCommission = PlatformPricing::commissionAmount($subtotal);
+
         return [
-            'gross_sales' => $subtotal,
-            'restaurant_net' => max(0, $subtotal - $serviceFee),
-            'delivery_fee' => $deliveryFee,
+            'gross_sales' => round($subtotal, 2),
+            'service_fee' => $platformCommission,
+            'restaurant_net' => PlatformPricing::restaurantNet($subtotal),
+            'delivery_fee' => round($deliveryFee, 2),
+            'commission_rate' => PlatformPricing::commissionRate(),
         ];
     }
 

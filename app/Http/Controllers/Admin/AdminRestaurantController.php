@@ -8,6 +8,7 @@ use App\Models\SupportNote;
 use App\Models\User;
 use App\Notifications\PartnerSystemNotification;
 use App\Support\OrderWorkflow;
+use App\Support\PlatformPricing;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -224,10 +225,10 @@ class AdminRestaurantController extends Controller
             'restaurant_name' => $restaurant->name,
             'order_count' => $orders->count(),
             'gross_sales' => round((float) $orders->sum('gross_sales'), 2),
-            'service_fees' => round((float) $orders->sum('service_fee'), 2),
+            'commission_rate' => PlatformPricing::commissionRate(),
+            'platform_commission' => round((float) $orders->sum('service_fee'), 2),
             'delivery_fees' => round((float) $orders->sum('delivery_fee'), 2),
             'restaurant_net' => round((float) $orders->sum('restaurant_net'), 2),
-            'pending_settlement_amount' => round((float) $orders->where('status', '!=', \App\Models\Order::STATUS_COMPLETED)->sum('restaurant_net'), 2),
         ]);
     }
 

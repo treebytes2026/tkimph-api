@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Customer;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Notifications\AdminSystemNotification;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -198,6 +199,34 @@ class CustomerAccountController extends Controller
         return response()->json([
             'message' => 'Account deleted successfully.',
         ]);
+    }
+
+    public function submitHelpCenterConcern(Request $request): JsonResponse
+    {
+        $customer = $this->customer($request);
+        $data = $request->validate([
+            'subject' => ['required', 'string', 'max:160'],
+            'message' => ['required', 'string', 'max:3000'],
+        ]);
+
+        User::query()
+            ->admins()
+            ->each(fn (User $admin) => $admin->notify(new AdminSystemNotification(
+                'customer_help_center',
+                'Help center concern from '.$customer->name.': '.$data['subject'],
+                [
+                    'customer_id' => $customer->id,
+                    'customer_name' => $customer->name,
+                    'customer_email' => $customer->email,
+                    'customer_phone' => $customer->phone,
+                    'subject' => $data['subject'],
+                    'message_body' => $data['message'],
+                ]
+            )));
+
+        return response()->json([
+            'message' => 'Your concern was sent to admin support.',
+        ], 201);
     }
 
     private function customer(Request $request): User

@@ -3,13 +3,17 @@
 namespace Tests\Feature;
 
 use App\Models\AdminSetting;
+use App\Models\CommissionCollection;
 use App\Models\Menu;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
 use App\Models\Order;
 use App\Models\Restaurant;
 use App\Models\User;
+use App\Support\PlatformPricing;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -102,7 +106,8 @@ class PartnerOperationsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('gross_sales', 320)
             ->assertJsonPath('restaurant_net', 305)
-            ->assertJsonPath('pending_settlement_amount', 115);
+            ->assertJsonPath('commission_rate', PlatformPricing::commissionRate())
+            ->assertJsonPath('platform_commission', 20);
     }
 
     public function test_partner_can_create_promotion_and_public_listing_shows_real_promo_label(): void
@@ -126,6 +131,59 @@ class PartnerOperationsTest extends TestCase
         $this->getJson('/api/public/restaurants?limit=10')
             ->assertOk()
             ->assertJsonPath('data.0.promo_label', '15% off | min PHP 300');
+    }
+
+    public function test_partner_can_set_menu_and_item_discount_settings(): void
+    {
+        [$owner, $restaurant] = $this->createReadyRestaurant();
+        $menu = $restaurant->menus()->firstOrFail();
+        $item = $menu->items()->firstOrFail();
+
+        Sanctum::actingAs($owner);
+
+        $this->patchJson("/api/partner/restaurants/{$restaurant->id}/menus/{$menu->id}", [
+            'discount_enabled' => true,
+            'discount_percent' => 10,
+        ])->assertOk()->assertJsonPath('discount_enabled', true);
+
+        $this->patchJson("/api/partner/restaurants/{$restaurant->id}/menus/{$menu->id}/items/{$item->id}", [
+            'discount_enabled' => true,
+            'discount_percent' => 20,
+        ])->assertOk()
+            ->assertJsonPath('discount_enabled', true)
+            ->assertJsonPath('discount_percent', '20.00');
+    }
+
+    public function test_partner_can_submit_commission_payment_proof(): void
+    {
+        Storage::fake('public');
+
+        [$owner, $restaurant] = $this->createReadyRestaurant();
+        $collection = CommissionCollection::query()->create([
+            'restaurant_id' => $restaurant->id,
+            'period_from' => now()->subDays(7)->toDateString(),
+            'period_to' => now()->toDateString(),
+            'order_count' => 3,
+            'gross_sales' => 1000,
+            'commission_amount' => 130,
+            'restaurant_net' => 870,
+            'status' => CommissionCollection::STATUS_PENDING,
+        ]);
+
+        Sanctum::actingAs($owner);
+
+        $this->post('/api/partner/commission-collections/'.$collection->id.'/payment-proof', [
+            'partner_payment_method' => CommissionCollection::PAYMENT_METHOD_GCASH,
+            'partner_reference_number' => 'GCASH-998877',
+            'partner_payment_note' => 'Paid this morning',
+            'payment_proof' => UploadedFile::fake()->image('receipt.jpg'),
+        ])->assertOk()
+            ->assertJsonPath('collection.partner_payment_method', CommissionCollection::PAYMENT_METHOD_GCASH)
+            ->assertJsonPath('collection.partner_reference_number', 'GCASH-998877');
+
+        $collection->refresh();
+        $this->assertNotNull($collection->payment_proof_path);
+        Storage::disk('public')->assertExists($collection->payment_proof_path);
     }
 
     private function createReadyRestaurant(): array

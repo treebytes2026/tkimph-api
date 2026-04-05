@@ -10,7 +10,9 @@ use App\Models\OrderEvent;
 use App\Models\SupportNote;
 use App\Models\User;
 use App\Notifications\PartnerSystemNotification;
+use App\Support\CustomerOrderBroadcaster;
 use App\Support\OrderWorkflow;
+use App\Support\RiderRealtimeBroadcaster;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -190,6 +192,8 @@ class AdminOrderController extends Controller
                 ]
             ));
         }
+        RiderRealtimeBroadcaster::notifyRiderAndPool($order->rider_id, 'admin_order_status_changed');
+        CustomerOrderBroadcaster::notifyOrder($order->customer_id, $order->id, 'admin_order_status_changed');
 
         return response()->json([
             'message' => 'Order status updated.',
@@ -209,6 +213,7 @@ class AdminOrderController extends Controller
         ]);
 
         $riderId = $data['rider_id'] ?? null;
+        $previousRiderId = $order->rider_id;
         if ($riderId !== null) {
             $rider = User::query()->whereKey($riderId)->first();
             if (! $rider || ! $rider->isRider() || ! $rider->is_active) {
@@ -234,6 +239,11 @@ class AdminOrderController extends Controller
             $data['note'] ?? null,
             ['rider_id' => $riderId]
         );
+        RiderRealtimeBroadcaster::notifyRiderAndPool($riderId, 'admin_rider_assignment_changed');
+        if ($previousRiderId && (int) $previousRiderId !== (int) ($riderId ?? 0)) {
+            RiderRealtimeBroadcaster::notifyRider((int) $previousRiderId, 'admin_rider_assignment_changed');
+        }
+        CustomerOrderBroadcaster::notifyOrder($order->customer_id, $order->id, 'admin_rider_assignment_changed');
 
         return response()->json([
             'message' => 'Rider assignment updated.',
@@ -320,6 +330,7 @@ class AdminOrderController extends Controller
             'stalled_orders' => (int) (clone $active)->where('updated_at', '<', $threshold)->count(),
             'active_riders' => (int) User::query()->where('role', User::ROLE_RIDER)->where('is_active', true)->count(),
             'gross_sales' => round((float) $settleable->sum('gross_sales'), 2),
+            'platform_income' => round((float) $settleable->sum('service_fee'), 2),
             'restaurant_net' => round((float) $settleable->sum('restaurant_net'), 2),
             'sla_stalled_minutes' => $slaMinutes,
         ]);
