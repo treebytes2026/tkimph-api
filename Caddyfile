@@ -1,0 +1,7 @@
+api.tkimph.com {
+    reverse_proxy nginx:80
+}
+
+ws.tkimph.com {
+    reverse_proxy reverb:8080
+}
