@@ -7,6 +7,7 @@ RUN apt-get update \
         unzip \
         libpq-dev \
         libzip-dev \
+        libonig-dev \
         libpng-dev \
         libjpeg62-turbo-dev \
         libfreetype6-dev \
