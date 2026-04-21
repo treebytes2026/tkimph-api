@@ -125,7 +125,7 @@ class PartnerOrderController extends Controller
 
         $query = Order::query()
             ->where('restaurant_id', $restaurant->id)
-            ->whereNotIn('status', [Order::STATUS_CANCELLED, Order::STATUS_FAILED]);
+            ->where('status', Order::STATUS_COMPLETED);
 
         if ($request->filled('date_from')) {
             $query->whereDate('placed_at', '>=', $request->string('date_from')->toString());

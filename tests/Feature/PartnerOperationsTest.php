@@ -70,7 +70,7 @@ class PartnerOperationsTest extends TestCase
             ->assertJsonPath('data.0.timeline.0.event_type', 'partner_order_exception');
     }
 
-    public function test_partner_earnings_summary_excludes_cancelled_and_failed_orders(): void
+    public function test_partner_earnings_summary_only_includes_completed_orders(): void
     {
         [$owner, $restaurant] = $this->createReadyRestaurant();
         $customer = User::factory()->create(['role' => User::ROLE_CUSTOMER]);
@@ -104,10 +104,11 @@ class PartnerOperationsTest extends TestCase
 
         $this->getJson('/api/partner/earnings')
             ->assertOk()
-            ->assertJsonPath('gross_sales', 320)
-            ->assertJsonPath('restaurant_net', 305)
+            ->assertJsonPath('order_count', 1)
+            ->assertJsonPath('gross_sales', 200)
+            ->assertJsonPath('restaurant_net', 190)
             ->assertJsonPath('commission_rate', PlatformPricing::commissionRate())
-            ->assertJsonPath('platform_commission', 20);
+            ->assertJsonPath('platform_commission', 10);
     }
 
     public function test_partner_can_create_promotion_and_public_listing_shows_real_promo_label(): void

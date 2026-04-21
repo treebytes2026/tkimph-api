@@ -13,7 +13,25 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        $middleware->append(\Illuminate\Http\Middleware\HandleCors::class);
+        $middleware->throttleApi(
+            limiter: 'api',
+            redis: filter_var(env('RATE_LIMIT_USE_REDIS', false), FILTER_VALIDATE_BOOL),
+        );
+
+        $middleware->trustHosts(at: function (): array {
+            $hosts = array_filter(array_map('trim', explode(',', (string) env('TRUSTED_HOSTS', ''))));
+
+            foreach ([env('APP_URL'), env('FRONTEND_URL')] as $url) {
+                $host = parse_url((string) $url, PHP_URL_HOST);
+
+                if ($host) {
+                    $hosts[] = $host;
+                }
+            }
+
+            return array_values(array_unique($hosts));
+        });
+
         $middleware->alias([
             'admin' => \App\Http\Middleware\EnsureUserIsAdmin::class,
         ]);
