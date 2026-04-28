@@ -13,6 +13,8 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->prepend(\Illuminate\Http\Middleware\HandleCors::class);
+
         $middleware->throttleApi(
             limiter: 'api',
             redis: filter_var(env('RATE_LIMIT_USE_REDIS', false), FILTER_VALIDATE_BOOL),
