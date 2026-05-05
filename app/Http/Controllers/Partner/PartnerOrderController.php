@@ -61,6 +61,14 @@ class PartnerOrderController extends Controller
         $fromStatus = $order->status;
         $nextStatus = $data['status'];
 
+        if ($fromStatus === Order::STATUS_OUT_FOR_DELIVERY && $nextStatus !== $fromStatus) {
+            abort(422, 'The rider must update this order after it is out for delivery.');
+        }
+
+        if ($nextStatus === Order::STATUS_COMPLETED) {
+            abort(422, 'Only the rider can mark a delivery order as completed.');
+        }
+
         if (AdminSetting::readBool('order_transition_guardrails', true)) {
             OrderWorkflow::assertTransition($fromStatus, $nextStatus);
         }

@@ -53,7 +53,12 @@ class RiderOrderController extends Controller
         $this->rider($request);
 
         $orders = Order::query()
-            ->whereIn('status', [Order::STATUS_PENDING, Order::STATUS_ACCEPTED])
+            ->whereIn('status', [
+                Order::STATUS_PENDING,
+                Order::STATUS_ACCEPTED,
+                Order::STATUS_PREPARING,
+                Order::STATUS_OUT_FOR_DELIVERY,
+            ])
             ->whereNull('rider_id')
             ->with(['customer:id,name,phone', 'restaurant:id,name,phone'])
             ->orderBy('id')
@@ -156,7 +161,14 @@ class RiderOrderController extends Controller
         $claimed = DB::transaction(function () use ($order, $rider) {
             $lockedOrder = Order::query()->whereKey($order)->lockForUpdate()->firstOrFail();
 
-            if ((int) $lockedOrder->rider_id > 0 || ! in_array($lockedOrder->status, [Order::STATUS_PENDING, Order::STATUS_ACCEPTED], true)) {
+            $claimableStatuses = [
+                Order::STATUS_PENDING,
+                Order::STATUS_ACCEPTED,
+                Order::STATUS_PREPARING,
+                Order::STATUS_OUT_FOR_DELIVERY,
+            ];
+
+            if ((int) $lockedOrder->rider_id > 0 || ! in_array($lockedOrder->status, $claimableStatuses, true)) {
                 abort(409, 'This order has already been claimed by another rider.');
             }
 
