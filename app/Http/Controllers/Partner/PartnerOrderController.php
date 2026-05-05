@@ -7,8 +7,8 @@ use App\Models\AdminSetting;
 use App\Models\Order;
 use App\Models\User;
 use App\Notifications\AdminSystemNotification;
-use App\Support\CustomerOrderBroadcaster;
 use App\Support\CommissionCollectionMonitor;
+use App\Support\CustomerOrderBroadcaster;
 use App\Support\OrderWorkflow;
 use App\Support\PlatformPricing;
 use App\Support\RiderRealtimeBroadcaster;
@@ -24,6 +24,7 @@ class PartnerOrderController extends Controller
 
         $restaurantIds = $user->restaurants()->pluck('id');
         $status = $request->query('status');
+        $liveOnly = $request->boolean('live');
 
         $query = Order::query()
             ->with([
@@ -37,9 +38,20 @@ class PartnerOrderController extends Controller
 
         if (is_string($status) && $status !== '') {
             $query->where('status', $status);
+        } elseif ($liveOnly) {
+            $query->whereNotIn('status', [
+                Order::STATUS_COMPLETED,
+                Order::STATUS_CANCELLED,
+                Order::STATUS_FAILED,
+                Order::STATUS_UNDELIVERABLE,
+            ]);
         }
 
-        $orders = $query->paginate($request->integer('per_page', 20));
+        if ($request->filled('since_id')) {
+            $query->where('id', '>', $request->integer('since_id'));
+        }
+
+        $orders = $query->paginate(min(max($request->integer('per_page', 20), 1), 100));
         $orders->getCollection()->transform(fn (Order $order) => $this->serializeOrder($order));
 
         return response()
@@ -143,17 +155,15 @@ class PartnerOrderController extends Controller
             $query->whereDate('placed_at', '<=', $request->string('date_to')->toString());
         }
 
-        $orders = $query->get();
-
         return response()->json([
             'restaurant_id' => $restaurant->id,
             'restaurant_name' => $restaurant->name,
-            'order_count' => $orders->count(),
-            'gross_sales' => round((float) $orders->sum('gross_sales'), 2),
+            'order_count' => (clone $query)->count(),
+            'gross_sales' => round((float) (clone $query)->sum('gross_sales'), 2),
             'commission_rate' => PlatformPricing::commissionRate(),
-            'platform_commission' => round((float) $orders->sum('service_fee'), 2),
-            'delivery_fees' => round((float) $orders->sum('delivery_fee'), 2),
-            'restaurant_net' => round((float) $orders->sum('restaurant_net'), 2),
+            'platform_commission' => round((float) (clone $query)->sum('service_fee'), 2),
+            'delivery_fees' => round((float) (clone $query)->sum('delivery_fee'), 2),
+            'restaurant_net' => round((float) (clone $query)->sum('restaurant_net'), 2),
             'payment_details' => [
                 'gcash_name' => AdminSetting::read('commission_payment_gcash_name', ''),
                 'gcash_number' => AdminSetting::read('commission_payment_gcash_number', ''),
@@ -215,6 +225,7 @@ class PartnerOrderController extends Controller
         /** @var User $user */
         $user = $request->user();
         abort_unless($user && $user->isRestaurantOwner(), 403, 'Partner access only.');
+
         return $user;
     }
 }

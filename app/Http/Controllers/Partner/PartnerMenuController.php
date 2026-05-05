@@ -5,8 +5,8 @@ namespace App\Http\Controllers\Partner;
 use App\Http\Controllers\Controller;
 use App\Models\Menu;
 use App\Models\Restaurant;
-use App\Support\MenuPricing;
 use App\Models\User;
+use App\Support\MenuPricing;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -20,9 +20,9 @@ class PartnerMenuController extends Controller
             ->withCount(['items'])
             ->orderBy('sort_order')
             ->orderBy('name')
-            ->get();
+            ->paginate(min(max($request->integer('per_page', 50), 1), 100));
 
-        return response()->json(['data' => $menus]);
+        return response()->json($menus);
     }
 
     public function store(Request $request, Restaurant $restaurant): JsonResponse
@@ -52,11 +52,19 @@ class PartnerMenuController extends Controller
         $this->authorizePartnerRestaurant($request, $restaurant);
         abort_unless($menu->restaurant_id === $restaurant->id, 404);
 
-        $menu->load([
-            'items' => function ($q) {
-                $q->orderBy('sort_order')->orderBy('name');
-            },
-            'items.menuCategory',
+        $items = $menu->items()
+            ->with('menuCategory')
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->paginate(min(max($request->integer('items_per_page', 100), 1), 200));
+
+        $menu->setRelation('items', $items->getCollection());
+        $menu->setAttribute('items_pagination', [
+            'current_page' => $items->currentPage(),
+            'last_page' => $items->lastPage(),
+            'per_page' => $items->perPage(),
+            'total' => $items->total(),
+            'next_page_url' => $items->nextPageUrl(),
         ]);
 
         return response()->json($menu);
