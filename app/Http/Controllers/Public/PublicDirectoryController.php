@@ -15,6 +15,7 @@ use App\Support\PlatformPricing;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -27,11 +28,11 @@ class PublicDirectoryController extends Controller
     {
         CommissionCollectionMonitor::processOverdueCollections();
 
-        $rows = Cuisine::query()
+        $rows = Cache::remember('public:cuisines:active', now()->addMinutes(5), fn () => Cuisine::query()
             ->where('is_active', true)
             ->orderBy('sort_order')
             ->orderBy('name')
-            ->get(['id', 'name', 'sort_order']);
+            ->get(['id', 'name', 'sort_order']));
 
         return response()->json(['data' => $rows]);
     }
@@ -40,58 +41,69 @@ class PublicDirectoryController extends Controller
     {
         CommissionCollectionMonitor::processOverdueCollections();
 
-        $query = Restaurant::query()
-            ->where('is_active', true)
-            ->where('operating_status', Restaurant::OPERATING_STATUS_OPEN)
-            ->with([
-                'cuisine:id,name',
-                'businessType:id,name',
-                'menus' => static function ($q) {
-                    $q->where('is_active', true)
-                        ->orderBy('sort_order')
-                        ->orderBy('id')
-                        ->select('id', 'restaurant_id', 'name', 'sort_order');
-                },
-                'promotions' => static function ($q) {
-                    $q->activeAt(now())
-                        ->orderByDesc('priority')
-                        ->orderByDesc('id');
-                },
-            ])
-            ->withAvg([
-                'reviews as reviews_avg_restaurant_rating' => static fn ($q) => $q->where('status', OrderReview::STATUS_PUBLISHED),
+        $payload = Cache::remember('public:restaurants:'.sha1($request->fullUrl()), now()->addSeconds(45), function () use ($request) {
+            $query = Restaurant::query()
+                ->where('is_active', true)
+                ->where('operating_status', Restaurant::OPERATING_STATUS_OPEN)
+                ->where(function ($q) {
+                    $q->where('force_publicly_orderable', true)
+                        ->orWhereHas('menus', static function ($menuQuery) {
+                            $menuQuery->where('is_active', true)
+                                ->whereHas('items', static fn ($itemQuery) => $itemQuery->where('is_available', true));
+                        });
+                })
+                ->with([
+                    'cuisine:id,name',
+                    'businessType:id,name',
+                    'menus' => static function ($q) {
+                        $q->where('is_active', true)
+                            ->orderBy('sort_order')
+                            ->orderBy('id')
+                            ->select('id', 'restaurant_id', 'name', 'sort_order');
+                    },
+                    'promotions' => static function ($q) {
+                        $q->activeAt(now())
+                            ->orderByDesc('priority')
+                            ->orderByDesc('id');
+                    },
+                ])
+                ->withAvg([
+                    'reviews as reviews_avg_restaurant_rating' => static fn ($q) => $q->where('status', OrderReview::STATUS_PUBLISHED),
             ], 'restaurant_rating')
-            ->withCount([
-                'reviews as reviews_count' => static fn ($q) => $q->where('status', OrderReview::STATUS_PUBLISHED),
+                ->withCount([
+                    'reviews as reviews_count' => static fn ($q) => $q->where('status', OrderReview::STATUS_PUBLISHED),
             ]);
 
-        if ($request->filled('cuisine_id')) {
-            $query->where('cuisine_id', $request->integer('cuisine_id'));
-        }
-
-        $limit = min(max($request->integer('limit', 24), 1), 60);
-        $rows = $query
-            ->orderByDesc('id')
-            ->get();
-        $rows = $rows->filter(fn (Restaurant $restaurant) => $restaurant->isOperationallyAvailable())
-            ->take($limit)
-            ->values();
-        $total = $rows->count();
-
-        foreach ($rows as $restaurant) {
-            if (blank($restaurant->slug)) {
-                $restaurant->slug = Str::slug($restaurant->name).'-'.Str::random(4);
-                $restaurant->saveQuietly();
+            if ($request->filled('cuisine_id')) {
+                $query->where('cuisine_id', $request->integer('cuisine_id'));
             }
-        }
 
-        return response()->json([
-            'data' => $rows->map(fn (Restaurant $r) => $this->serializeRestaurant($r, true)),
-            'meta' => [
-                'total' => $total,
-                'limit' => $limit,
-            ],
-        ]);
+            if ($request->filled('q')) {
+                $search = '%'.str_replace(['%', '_'], ['\%', '\_'], $request->string('q')->trim()->toString()).'%';
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'like', $search)
+                        ->orWhere('description', 'like', $search)
+                        ->orWhere('address', 'like', $search)
+                        ->orWhereHas('cuisine', static fn ($cuisineQuery) => $cuisineQuery->where('name', 'like', $search));
+                });
+            }
+
+            $perPage = min(max($request->integer('per_page', $request->integer('limit', 24)), 1), 60);
+            $rows = $query->orderByDesc('id')->paginate($perPage);
+
+            foreach ($rows->getCollection() as $restaurant) {
+                if (blank($restaurant->slug)) {
+                    $restaurant->slug = Str::slug($restaurant->name).'-'.Str::random(4);
+                    $restaurant->saveQuietly();
+                }
+            }
+
+            $rows->getCollection()->transform(fn (Restaurant $r) => $this->serializeRestaurant($r, true));
+
+            return $this->withMeta($rows->toArray());
+        });
+
+        return response()->json($payload);
     }
 
     /**
@@ -101,84 +113,100 @@ class PublicDirectoryController extends Controller
     {
         CommissionCollectionMonitor::processOverdueCollections();
 
-        $query = Restaurant::query()
-            ->where('is_active', true)
-            ->where('operating_status', Restaurant::OPERATING_STATUS_OPEN)
-            ->with([
-                'cuisine:id,name',
-                'businessType:id,name',
-                'promotions' => static function ($q) {
-                    $q->activeAt(now())
-                        ->orderByDesc('priority')
-                        ->orderByDesc('id');
-                },
-            ])
-            ->withAvg([
-                'reviews as reviews_avg_restaurant_rating' => static fn ($q) => $q->where('status', OrderReview::STATUS_PUBLISHED),
+        $payload = Cache::remember('public:restaurants-menu-feed:'.sha1($request->fullUrl()), now()->addSeconds(45), function () use ($request) {
+            $query = Restaurant::query()
+                ->where('is_active', true)
+                ->where('operating_status', Restaurant::OPERATING_STATUS_OPEN)
+                ->where(function ($q) {
+                    $q->where('force_publicly_orderable', true)
+                        ->orWhereHas('menus', static function ($menuQuery) {
+                            $menuQuery->where('is_active', true)
+                                ->whereHas('items', static fn ($itemQuery) => $itemQuery->where('is_available', true));
+                        });
+                })
+                ->with([
+                    'cuisine:id,name',
+                    'businessType:id,name',
+                    'promotions' => static function ($q) {
+                        $q->activeAt(now())
+                            ->orderByDesc('priority')
+                            ->orderByDesc('id');
+                    },
+                ])
+                ->withAvg([
+                    'reviews as reviews_avg_restaurant_rating' => static fn ($q) => $q->where('status', OrderReview::STATUS_PUBLISHED),
             ], 'restaurant_rating')
-            ->withCount([
-                'reviews as reviews_count' => static fn ($q) => $q->where('status', OrderReview::STATUS_PUBLISHED),
+                ->withCount([
+                    'reviews as reviews_count' => static fn ($q) => $q->where('status', OrderReview::STATUS_PUBLISHED),
             ]);
 
-        if ($request->filled('cuisine_id')) {
-            $query->where('cuisine_id', $request->integer('cuisine_id'));
-        }
-
-        $limit = min(max($request->integer('limit', 24), 1), 60);
-        $rows = $query
-            ->orderByDesc('id')
-            ->get();
-        $rows = $rows->filter(fn (Restaurant $restaurant) => $restaurant->isOperationallyAvailable())
-            ->take($limit)
-            ->values();
-        $total = $rows->count();
-
-        foreach ($rows as $restaurant) {
-            if (blank($restaurant->slug)) {
-                $restaurant->slug = Str::slug($restaurant->name).'-'.Str::random(4);
-                $restaurant->saveQuietly();
+            if ($request->filled('cuisine_id')) {
+                $query->where('cuisine_id', $request->integer('cuisine_id'));
             }
-        }
 
-        $restaurantIds = $rows->pluck('id');
-        $itemsByRestaurant = collect();
-        if ($restaurantIds->isNotEmpty()) {
-            $allItems = MenuItem::query()
-                ->whereHas('menu', static function ($q) use ($restaurantIds) {
-                    $q->whereIn('restaurant_id', $restaurantIds)->where('is_active', true);
-                })
-                ->where('is_available', true)
-                ->with(['menu:id,name,sort_order,restaurant_id'])
-                ->withAvg([
-                    'reviews as reviews_avg_rating' => static fn ($q) => $q->where('status', MenuItemReview::STATUS_PUBLISHED),
-                ], 'rating')
-                ->withCount([
-                    'reviews as reviews_count' => static fn ($q) => $q->where('status', MenuItemReview::STATUS_PUBLISHED),
-                ])
-                ->orderBy('sort_order')
-                ->orderBy('name')
-                ->get();
+            if ($request->filled('q')) {
+                $search = '%'.str_replace(['%', '_'], ['\%', '\_'], $request->string('q')->trim()->toString()).'%';
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'like', $search)
+                        ->orWhere('description', 'like', $search)
+                        ->orWhere('address', 'like', $search)
+                        ->orWhereHas('cuisine', static fn ($cuisineQuery) => $cuisineQuery->where('name', 'like', $search))
+                        ->orWhereHas('menus.items', static fn ($itemQuery) => $itemQuery
+                            ->where('is_available', true)
+                            ->where(function ($inner) use ($search) {
+                                $inner->where('name', 'like', $search)
+                                    ->orWhere('description', 'like', $search);
+                            }));
+                });
+            }
 
-            $itemsByRestaurant = $allItems->groupBy(fn (MenuItem $i) => $i->menu->restaurant_id);
-        }
+            $perPage = min(max($request->integer('per_page', $request->integer('limit', 24)), 1), 30);
+            $rows = $query->orderByDesc('id')->paginate($perPage);
 
-        $data = $rows->map(function (Restaurant $r) use ($itemsByRestaurant) {
-            $items = $itemsByRestaurant->get($r->id, collect());
+            foreach ($rows->getCollection() as $restaurant) {
+                if (blank($restaurant->slug)) {
+                    $restaurant->slug = Str::slug($restaurant->name).'-'.Str::random(4);
+                    $restaurant->saveQuietly();
+                }
+            }
 
-            return [
-                // Include listing meta (rating, delivery, promo, is_ad) so dish cards match Foodpanda-style UI.
-                'restaurant' => $this->serializeRestaurant($r, true),
-                'menus' => $this->buildMenusPayloadFromItems($items),
-            ];
+            $restaurantIds = $rows->getCollection()->pluck('id');
+            $itemsByRestaurant = collect();
+            if ($restaurantIds->isNotEmpty()) {
+                $allItems = MenuItem::query()
+                    ->whereHas('menu', static function ($q) use ($restaurantIds) {
+                        $q->whereIn('restaurant_id', $restaurantIds)->where('is_active', true);
+                    })
+                    ->where('is_available', true)
+                    ->with(['menu:id,name,sort_order,restaurant_id'])
+                    ->withAvg([
+                        'reviews as reviews_avg_rating' => static fn ($q) => $q->where('status', MenuItemReview::STATUS_PUBLISHED),
+                    ], 'rating')
+                    ->withCount([
+                        'reviews as reviews_count' => static fn ($q) => $q->where('status', MenuItemReview::STATUS_PUBLISHED),
+                    ])
+                    ->orderBy('sort_order')
+                    ->orderBy('name')
+                    ->limit($perPage * 80)
+                    ->get();
+
+                $itemsByRestaurant = $allItems->groupBy(fn (MenuItem $i) => $i->menu->restaurant_id);
+            }
+
+            $rows->getCollection()->transform(function (Restaurant $r) use ($itemsByRestaurant) {
+                $items = $itemsByRestaurant->get($r->id, collect());
+
+                return [
+                    // Include listing meta (rating, delivery, promo, is_ad) so dish cards match Foodpanda-style UI.
+                    'restaurant' => $this->serializeRestaurant($r, true),
+                    'menus' => $this->buildMenusPayloadFromItems($items),
+                ];
+            });
+
+            return $this->withMeta($rows->toArray());
         });
 
-        return response()->json([
-            'data' => $data,
-            'meta' => [
-                'total' => $total,
-                'limit' => $limit,
-            ],
-        ]);
+        return response()->json($payload);
     }
 
     public function show(string $slug): JsonResponse
@@ -249,7 +277,7 @@ class PublicDirectoryController extends Controller
     }
 
     /**
-     * @return array<int, array{menu: array{id: int, name: string, sort_order: int}, items: \Illuminate\Support\Collection}>
+     * @return array<int, array{menu: array{id: int, name: string, sort_order: int}, items: Collection}>
      */
     private function buildMenusPayloadFromItems(Collection $items): array
     {
@@ -272,6 +300,22 @@ class PublicDirectoryController extends Controller
             ->sortBy(fn (array $s) => $s['menu']['sort_order'])
             ->values()
             ->all();
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function withMeta(array $payload): array
+    {
+        $payload['meta'] = [
+            'total' => $payload['total'] ?? 0,
+            'per_page' => $payload['per_page'] ?? null,
+            'current_page' => $payload['current_page'] ?? null,
+            'last_page' => $payload['last_page'] ?? null,
+        ];
+
+        return $payload;
     }
 
     private function serializeMenuItem(MenuItem $item): array

@@ -251,6 +251,87 @@ class PartnerOperationsTest extends TestCase
         Storage::disk('public')->assertExists($collection->payment_proof_path);
     }
 
+    public function test_public_restaurant_listing_is_paginated_and_searchable(): void
+    {
+        for ($i = 1; $i <= 3; $i++) {
+            $owner = User::factory()->create(['role' => User::ROLE_RESTAURANT_OWNER, 'is_active' => true]);
+            Restaurant::query()->create([
+                'name' => $i === 2 ? 'Searchable Sushi' : 'Scale Restaurant '.$i,
+                'slug' => 'scale-restaurant-'.$i,
+                'description' => 'Scale test listing',
+                'phone' => '0912345678'.$i,
+                'address' => 'Sample Address',
+                'user_id' => $owner->id,
+                'is_active' => true,
+                'operating_status' => Restaurant::OPERATING_STATUS_OPEN,
+                'force_publicly_orderable' => true,
+            ]);
+        }
+
+        $this->getJson('/api/public/restaurants?per_page=2')
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('meta.total', 3)
+            ->assertJsonPath('per_page', 2);
+
+        $this->getJson('/api/public/restaurants?per_page=10&q=sushi')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.name', 'Searchable Sushi');
+    }
+
+    public function test_partner_menu_index_and_order_index_are_paginated(): void
+    {
+        [$owner, $restaurant] = $this->createReadyRestaurant();
+        $customer = User::factory()->create(['role' => User::ROLE_CUSTOMER]);
+
+        Menu::query()->create([
+            'restaurant_id' => $restaurant->id,
+            'name' => 'Second menu',
+            'sort_order' => 2,
+            'is_active' => true,
+        ]);
+        Menu::query()->create([
+            'restaurant_id' => $restaurant->id,
+            'name' => 'Third menu',
+            'sort_order' => 3,
+            'is_active' => true,
+        ]);
+
+        foreach ([Order::STATUS_PENDING, Order::STATUS_COMPLETED, Order::STATUS_ACCEPTED] as $index => $status) {
+            Order::query()->create([
+                'order_number' => 'TKM-SCALE-'.$index,
+                'customer_id' => $customer->id,
+                'restaurant_id' => $restaurant->id,
+                'status' => $status,
+                'payment_method' => 'cod',
+                'payment_status' => 'unpaid',
+                'delivery_mode' => 'delivery',
+                'delivery_address' => 'Sample Address',
+                'subtotal' => 100,
+                'service_fee' => 10,
+                'delivery_fee' => 0,
+                'gross_sales' => 100,
+                'restaurant_net' => 90,
+                'total' => 110,
+                'placed_at' => now(),
+            ]);
+        }
+
+        Sanctum::actingAs($owner);
+
+        $this->getJson("/api/partner/restaurants/{$restaurant->id}/menus?per_page=2")
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('per_page', 2);
+
+        $this->getJson('/api/partner/orders?live=1&per_page=1')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('per_page', 1)
+            ->assertJsonPath('total', 2);
+    }
+
     private function createReadyRestaurant(): array
     {
         AdminSetting::write('partner_self_pause_enabled', '1');

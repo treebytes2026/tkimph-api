@@ -6,7 +6,6 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
@@ -15,15 +14,13 @@ class AuthController extends Controller
         $user = $this->authenticate($request);
 
         if ($user->role === User::ROLE_ADMIN) {
-            throw ValidationException::withMessages([
-                'email' => ['Invalid email and password.'],
-            ]);
+            return $this->invalidCredentialsResponse();
         }
 
         if (! $user->is_active) {
-            throw ValidationException::withMessages([
-                'email' => ['This account has been deactivated.'],
-            ]);
+            return response()->json([
+                'message' => 'This account has been deactivated.',
+            ], 403);
         }
 
         $token = $user->createToken('customer-token')->plainTextToken;
@@ -36,15 +33,13 @@ class AuthController extends Controller
         $user = $this->authenticate($request);
 
         if ($user->role !== User::ROLE_ADMIN) {
-            throw ValidationException::withMessages([
-                'email' => ['You do not have admin access.'],
-            ]);
+            return $this->invalidCredentialsResponse();
         }
 
         if (! $user->is_active) {
-            throw ValidationException::withMessages([
-                'email' => ['This administrator account has been deactivated.'],
-            ]);
+            return response()->json([
+                'message' => 'This administrator account has been deactivated.',
+            ], 403);
         }
 
         $token = $user->createToken('admin-token')->plainTextToken;
@@ -62,12 +57,19 @@ class AuthController extends Controller
         $user = User::where('email', $request->email)->first();
 
         if (! $user || ! Hash::check($request->password, $user->password)) {
-            throw ValidationException::withMessages([
-                'email' => ['The provided credentials are incorrect.'],
-            ]);
+            abort(response()->json([
+                'message' => 'The email and password are not correct.',
+            ], 401));
         }
 
         return $user;
+    }
+
+    private function invalidCredentialsResponse(): JsonResponse
+    {
+        return response()->json([
+            'message' => 'The email and password are not correct.',
+        ], 401);
     }
 
     private function successResponse(User $user, string $token): JsonResponse
