@@ -94,6 +94,54 @@ class RiderOperationsTest extends TestCase
             ->assertStatus(409);
     }
 
+    public function test_rider_can_claim_unassigned_order_already_out_for_delivery(): void
+    {
+        $customer = User::factory()->create(['role' => User::ROLE_CUSTOMER]);
+        $owner = User::factory()->create(['role' => User::ROLE_RESTAURANT_OWNER]);
+        $restaurant = Restaurant::query()->create([
+            'name' => 'Out For Delivery Queue',
+            'slug' => 'out-for-delivery-queue',
+            'user_id' => $owner->id,
+            'is_active' => true,
+        ]);
+        $order = Order::query()->create([
+            'order_number' => 'TKM-CLAIM-OFD',
+            'customer_id' => $customer->id,
+            'restaurant_id' => $restaurant->id,
+            'status' => Order::STATUS_OUT_FOR_DELIVERY,
+            'payment_method' => 'cod',
+            'payment_status' => 'unpaid',
+            'refund_status' => Order::REFUND_STATUS_NOT_REQUIRED,
+            'delivery_mode' => 'delivery',
+            'delivery_address' => 'Sample Address',
+            'subtotal' => 100,
+            'service_fee' => 5,
+            'delivery_fee' => 0,
+            'gross_sales' => 100,
+            'restaurant_net' => 95,
+            'total' => 105,
+            'placed_at' => now(),
+        ]);
+
+        $rider = User::factory()->create(['role' => User::ROLE_RIDER, 'is_active' => true]);
+        Sanctum::actingAs($rider);
+
+        $this->getJson('/api/rider/orders/available')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $order->id)
+            ->assertJsonPath('data.0.status', Order::STATUS_OUT_FOR_DELIVERY);
+
+        $this->postJson("/api/rider/orders/{$order->id}/claim")
+            ->assertOk()
+            ->assertJsonPath('order.status', Order::STATUS_OUT_FOR_DELIVERY);
+
+        $this->assertDatabaseHas('orders', [
+            'id' => $order->id,
+            'rider_id' => $rider->id,
+            'status' => Order::STATUS_OUT_FOR_DELIVERY,
+        ]);
+    }
+
     public function test_customer_can_view_live_location_on_order_show(): void
     {
         [$rider, $order, $customer] = $this->createAssignedOrder();

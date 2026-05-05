@@ -70,6 +70,70 @@ class PartnerOperationsTest extends TestCase
             ->assertJsonPath('data.0.timeline.0.event_type', 'partner_order_exception');
     }
 
+    public function test_partner_cannot_update_status_after_order_is_out_for_delivery(): void
+    {
+        [$owner, $restaurant] = $this->createReadyRestaurant();
+        $customer = User::factory()->create(['role' => User::ROLE_CUSTOMER]);
+        $order = Order::query()->create([
+            'order_number' => 'TKM-PARTNER-DELIVERY-LOCK',
+            'customer_id' => $customer->id,
+            'restaurant_id' => $restaurant->id,
+            'status' => Order::STATUS_OUT_FOR_DELIVERY,
+            'payment_method' => 'cod',
+            'payment_status' => 'unpaid',
+            'delivery_mode' => 'delivery',
+            'delivery_address' => 'Sample Address',
+            'subtotal' => 150,
+            'service_fee' => 5,
+            'delivery_fee' => 0,
+            'gross_sales' => 150,
+            'restaurant_net' => 145,
+            'total' => 155,
+            'placed_at' => now(),
+        ]);
+
+        Sanctum::actingAs($owner);
+
+        $this->patchJson("/api/partner/orders/{$order->id}/status", [
+            'status' => Order::STATUS_COMPLETED,
+        ])->assertUnprocessable()
+            ->assertJsonPath('message', 'The rider must update this order after it is out for delivery.');
+
+        $this->assertSame(Order::STATUS_OUT_FOR_DELIVERY, $order->fresh()->status);
+    }
+
+    public function test_partner_cannot_mark_order_completed_before_rider_delivery_confirmation(): void
+    {
+        [$owner, $restaurant] = $this->createReadyRestaurant();
+        $customer = User::factory()->create(['role' => User::ROLE_CUSTOMER]);
+        $order = Order::query()->create([
+            'order_number' => 'TKM-PARTNER-COMPLETE-LOCK',
+            'customer_id' => $customer->id,
+            'restaurant_id' => $restaurant->id,
+            'status' => Order::STATUS_PREPARING,
+            'payment_method' => 'cod',
+            'payment_status' => 'unpaid',
+            'delivery_mode' => 'delivery',
+            'delivery_address' => 'Sample Address',
+            'subtotal' => 150,
+            'service_fee' => 5,
+            'delivery_fee' => 0,
+            'gross_sales' => 150,
+            'restaurant_net' => 145,
+            'total' => 155,
+            'placed_at' => now(),
+        ]);
+
+        Sanctum::actingAs($owner);
+
+        $this->patchJson("/api/partner/orders/{$order->id}/status", [
+            'status' => Order::STATUS_COMPLETED,
+        ])->assertUnprocessable()
+            ->assertJsonPath('message', 'Only the rider can mark a delivery order as completed.');
+
+        $this->assertSame(Order::STATUS_PREPARING, $order->fresh()->status);
+    }
+
     public function test_partner_earnings_summary_only_includes_completed_orders(): void
     {
         [$owner, $restaurant] = $this->createReadyRestaurant();
