@@ -78,6 +78,11 @@ class User extends Authenticatable
         return $this->hasMany(Restaurant::class, 'user_id');
     }
 
+    public function mobilePushTokens(): HasMany
+    {
+        return $this->hasMany(MobilePushToken::class);
+    }
+
     public function assignedOrders(): HasMany
     {
         return $this->hasMany(Order::class, 'rider_id');
