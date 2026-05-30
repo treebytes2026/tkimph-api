@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\User;
 use App\Support\CustomerOrderBroadcaster;
+use App\Support\ExpoPushService;
 use App\Support\OrderWorkflow;
 use App\Support\RiderRealtimeBroadcaster;
 use Illuminate\Http\JsonResponse;
@@ -132,6 +133,21 @@ class RiderOrderController extends Controller
         );
         RiderRealtimeBroadcaster::notifyRiderAndPool($rider->id, 'rider_order_status_changed');
         CustomerOrderBroadcaster::notifyOrder($order->customer_id, $order->id, 'rider_order_status_changed');
+        $partner = $order->fresh('restaurant.owner')->restaurant?->owner;
+        if ($partner) {
+            app(ExpoPushService::class)->sendToUser(
+                $partner,
+                'Delivery status updated',
+                $order->order_number.' is now '.str_replace('_', ' ', $data['status']).'.',
+                [
+                    'screen' => 'partner_orders',
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'status' => $data['status'],
+                    'reason' => 'rider_order_status_changed',
+                ]
+            );
+        }
 
         return response()->json([
             'message' => 'Order status updated.',
@@ -194,6 +210,20 @@ class RiderOrderController extends Controller
             );
             RiderRealtimeBroadcaster::notifyRiderAndPool($rider->id, 'rider_order_claimed');
             CustomerOrderBroadcaster::notifyOrder($lockedOrder->customer_id, $lockedOrder->id, 'rider_order_claimed');
+            $partner = $lockedOrder->fresh('restaurant.owner')->restaurant?->owner;
+            if ($partner) {
+                app(ExpoPushService::class)->sendToUser(
+                    $partner,
+                    'Rider claimed order',
+                    $lockedOrder->order_number.' is now assigned to a rider.',
+                    [
+                        'screen' => 'partner_orders',
+                        'order_id' => $lockedOrder->id,
+                        'order_number' => $lockedOrder->order_number,
+                        'reason' => 'rider_order_claimed',
+                    ]
+                );
+            }
 
             return $lockedOrder->fresh()->load(['customer:id,name,phone', 'restaurant:id,name,phone']);
         });

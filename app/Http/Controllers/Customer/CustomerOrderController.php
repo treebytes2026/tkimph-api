@@ -15,6 +15,7 @@ use App\Notifications\AdminSystemNotification;
 use App\Notifications\NewPartnerOrderNotification;
 use App\Support\CustomerOrderBroadcaster;
 use App\Support\CommissionCollectionMonitor;
+use App\Support\ExpoPushService;
 use App\Support\MenuPricing;
 use App\Support\OrderWorkflow;
 use App\Support\PlatformPricing;
@@ -255,6 +256,13 @@ class CustomerOrderController extends Controller
             $owner = $restaurant->owner;
             if ($owner) {
                 $owner->notify(new NewPartnerOrderNotification($order));
+                app(ExpoPushService::class)->sendToUser($owner, 'New order received', $order->order_number.' is waiting in your restaurant queue.', [
+                    'screen' => 'partner_orders',
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'restaurant_id' => $restaurant->id,
+                    'reason' => 'new_partner_order',
+                ]);
             }
 
             User::query()

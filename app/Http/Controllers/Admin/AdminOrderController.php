@@ -11,6 +11,7 @@ use App\Models\SupportNote;
 use App\Models\User;
 use App\Notifications\PartnerSystemNotification;
 use App\Support\CustomerOrderBroadcaster;
+use App\Support\ExpoPushService;
 use App\Support\OrderWorkflow;
 use App\Support\RiderRealtimeBroadcaster;
 use Illuminate\Http\JsonResponse;
@@ -191,6 +192,18 @@ class AdminOrderController extends Controller
                     'cancellation_reason' => $reason,
                 ]
             ));
+            app(ExpoPushService::class)->sendToUser(
+                $order->restaurant->owner,
+                'Order updated by admin',
+                $order->order_number.' is now '.str_replace('_', ' ', $data['status']).'.',
+                [
+                    'screen' => 'partner_orders',
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'status' => $data['status'],
+                    'reason' => 'admin_order_status_changed',
+                ]
+            );
         }
         RiderRealtimeBroadcaster::notifyRiderAndPool($order->rider_id, 'admin_order_status_changed');
         CustomerOrderBroadcaster::notifyOrder($order->customer_id, $order->id, 'admin_order_status_changed');

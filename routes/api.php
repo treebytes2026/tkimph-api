@@ -20,6 +20,7 @@ use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\Customer\CustomerAccountController;
 use App\Http\Controllers\Customer\CustomerOrderController;
+use App\Http\Controllers\MobilePushTokenController;
 use App\Http\Controllers\Public\PartnerApplicationController;
 use App\Http\Controllers\Public\PublicDirectoryController;
 use App\Http\Controllers\Public\RegistrationOptionsController;
@@ -78,6 +79,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/user', [AuthController::class, 'user']);
     Route::post('/logout', [AuthController::class, 'logout']);
+    Route::post('/me/push-token', [MobilePushTokenController::class, 'store']);
+    Route::delete('/me/push-token', [MobilePushTokenController::class, 'destroy']);
     Route::get('/customer/profile', [CustomerAccountController::class, 'show']);
     Route::patch('/customer/profile', [CustomerAccountController::class, 'updateProfile']);
     Route::post('/customer/email/send-verification', [CustomerAccountController::class, 'sendEmailVerificationCode']);
