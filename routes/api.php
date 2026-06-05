@@ -17,6 +17,7 @@ use App\Http\Controllers\Admin\AdminSettingsController;
 use App\Http\Controllers\Admin\AdminSettlementController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Auth\PasswordResetController;
+use App\Http\Controllers\Auth\SocialAuthController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\Customer\CustomerAccountController;
 use App\Http\Controllers\Customer\CustomerOrderController;
@@ -49,6 +50,7 @@ use Illuminate\Http\Request;
 Route::middleware('throttle:login')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
     Route::post('/admin/login', [AuthController::class, 'adminLogin']);
+    Route::post('/auth/social/firebase', [SocialAuthController::class, 'firebase']);
 });
 
 Route::middleware(['throttle:passwords'])->group(function () {

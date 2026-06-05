@@ -35,4 +35,9 @@ return [
         ],
     ],
 
+    'firebase' => [
+        // Firebase project id — used to validate the `aud`/`iss` claims of ID tokens.
+        'project_id' => env('FIREBASE_PROJECT_ID'),
+    ],
+
 ];
